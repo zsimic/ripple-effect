@@ -7,13 +7,32 @@ def test_help(cli):
     assert "downstream" in cli.logged.stdout
 
 
-def test_missing_config(cli, temp_folder):
+def test_missing_config(cli):
     cli.run("no-such-config.yml")
     assert cli.failed
 
 
-def test_sample_config(cli, temp_folder):
+def test_invalid_config(cli):
     runez.write("sample.yml", "# placeholder\n", logger=None)
     cli.run("sample.yml")
+    assert cli.failed
+    assert "downstream-projects" in cli.logged.stdout
+
+
+def test_minimal_valid_config(cli):
+    runez.write(
+        "sample.yml",
+        """
+proving-grounds: /tmp/ripple
+downstream-projects:
+  - .
+  - https://github.com/foo/bar.git@main
+""",
+        logger=None,
+    )
+    cli.run("sample.yml")
     assert cli.succeeded
-    assert "not yet implemented" in cli.logged.stdout
+    assert "upstream: . (local)" in cli.logged.stdout
+    assert "downstream projects: 2" in cli.logged.stdout
+    assert "folder: ." in cli.logged.stdout
+    assert "url: https://github.com/foo/bar.git@main" in cli.logged.stdout

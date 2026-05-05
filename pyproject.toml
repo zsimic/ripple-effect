@@ -10,7 +10,7 @@ name = "ripple-effect"
 dynamic = ["version"]
 description = "Know your blast radius before you push"
 readme = "README.rst"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
@@ -23,6 +23,7 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -51,22 +52,6 @@ ripple-effect = "ripple_effect:main"
 [project.urls]
 Source = "https://github.com/zsimic/ripple-effect"
 
-
-[tool.coverage.run]
-data_file = ".tox/.coverage"
-source = ["src"]
-patch = ["subprocess"]
-sigterm = true
-
-[tool.coverage.xml]
-output = ".tox/test-reports/coverage.xml"
-
-[tool.coverage.html]
-directory = ".tox/test-reports/htmlcov"
-
-[tool.pytest]
-cache_dir = ".tox/pytest_cache"
-testpaths = ["tests"]
 
 [tool.ruff]
 cache-dir = ".tox/.ruff_cache"
@@ -113,57 +98,3 @@ max-complexity = 19
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
-
-[tool.tox]
-env_list = ["py310", "py314", "coverage", "style", "typecheck", "readme"]
-
-[tool.tox.env_run_base]
-use_develop = true
-dependency_groups = ["test"]
-commands = [
-    ["pytest", "-vv", "--cov=src/ripple_effect", "tests"]
-]
-
-[tool.tox.env_run_base.set_env]
-COVERAGE_FILE = "{toxworkdir}/.coverage.{envname}"
-PYTHONDONTWRITEBYTECODE = "1"
-
-[tool.tox.env.coverage]
-skip_install = true
-deps = ["coverage"]
-set_env = { COVERAGE_FILE = "{toxworkdir}/.coverage" }
-commands = [
-    ["coverage", "combine"],
-    ["coverage", "report", "-m"],
-    ["coverage", "xml"],
-    ["coverage", "html"]
-]
-
-[tool.tox.env.style]
-skip_install = true
-deps = ["ruff"]
-commands = [
-    ["ruff", "check"],
-    ["ruff", "format", "--diff"]
-]
-
-[tool.tox.env.typecheck]
-use_develop = true
-deps = ["pyright"]
-commands = [["pyright"]]
-
-[tool.tox.env.readme]
-skip_install = true
-deps = ["uv", "twine"]
-commands = [
-    ["uv", "build", "-q", "-o", "{env_dir}/dist"],
-    ["twine", "check", "{env_dir}/dist/*"]
-]
-
-[tool.tox.env.reformat]
-skip_install = true
-deps = ["ruff"]
-commands = [
-    ["ruff", "check", "--fix"],
-    ["ruff", "format"]
-]
