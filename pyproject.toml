@@ -1,0 +1,169 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+local_scheme = "dirty-tag"
+
+[project]
+name = "ripple-effect"
+dynamic = ["version"]
+description = "Know your blast radius before you push"
+readme = "README.rst"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    {name = "Zoran Simic", email = "zoran@simicweb.com"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "click",
+    "PyYAML",
+    "runez",
+]
+
+[dependency-groups]
+test = [
+    "pytest-cov",
+]
+dev = [
+    { include-group = "test" },
+]
+
+[project.scripts]
+ripple-effect = "ripple_effect:main"
+
+[project.urls]
+Source = "https://github.com/zsimic/ripple-effect"
+
+
+[tool.coverage.run]
+data_file = ".tox/.coverage"
+source = ["src"]
+patch = ["subprocess"]
+sigterm = true
+
+[tool.coverage.xml]
+output = ".tox/test-reports/coverage.xml"
+
+[tool.coverage.html]
+directory = ".tox/test-reports/htmlcov"
+
+[tool.pytest]
+cache_dir = ".tox/pytest_cache"
+testpaths = ["tests"]
+
+[tool.ruff]
+cache-dir = ".tox/.ruff_cache"
+line-length = 140
+
+[tool.ruff.lint]
+extend-select = [
+    "A",   # flake8-builtins
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "C90", # mccabe
+    "DTZ", # flake8-datetimez
+    "E",   # pycodestyle errors
+    "ERA", # eradicate
+    "F",   # pyflakes
+    "FLY", # flynt
+    "G",   # flake8-logging-format
+    "I",   # isort
+    "INT", # flake8-gettext
+    "PGH", # pygrep-hooks
+    "PIE", # flake8-pie
+    "PT",  # flake8-pytest
+    "PYI", # flake8-pyi
+    "Q",   # flake8-quotes
+    "RSE", # flake8-raise
+    "RUF", # ruff-specific
+    "S",   # flake8-bandit
+    "SIM", # flake8-simplify
+    "SLOT", # flake8-slots
+    "T10", # flake8-debugger
+    "TID", # flake8-tidy-imports
+    "TCH", # flake8-type-checking
+    "TD",  # flake8-todos
+    "W",   # pycodestyle warnings
+]
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.ruff.lint.isort]
+order-by-type = false
+
+[tool.ruff.lint.mccabe]
+max-complexity = 19
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.tox]
+env_list = ["py310", "py314", "coverage", "style", "typecheck", "readme"]
+
+[tool.tox.env_run_base]
+use_develop = true
+dependency_groups = ["test"]
+commands = [
+    ["pytest", "-vv", "--cov=src/ripple_effect", "tests"]
+]
+
+[tool.tox.env_run_base.set_env]
+COVERAGE_FILE = "{toxworkdir}/.coverage.{envname}"
+PYTHONDONTWRITEBYTECODE = "1"
+
+[tool.tox.env.coverage]
+skip_install = true
+deps = ["coverage"]
+set_env = { COVERAGE_FILE = "{toxworkdir}/.coverage" }
+commands = [
+    ["coverage", "combine"],
+    ["coverage", "report", "-m"],
+    ["coverage", "xml"],
+    ["coverage", "html"]
+]
+
+[tool.tox.env.style]
+skip_install = true
+deps = ["ruff"]
+commands = [
+    ["ruff", "check"],
+    ["ruff", "format", "--diff"]
+]
+
+[tool.tox.env.typecheck]
+use_develop = true
+deps = ["pyright"]
+commands = [["pyright"]]
+
+[tool.tox.env.readme]
+skip_install = true
+deps = ["uv", "twine"]
+commands = [
+    ["uv", "build", "-q", "-o", "{env_dir}/dist"],
+    ["twine", "check", "{env_dir}/dist/*"]
+]
+
+[tool.tox.env.reformat]
+skip_install = true
+deps = ["ruff"]
+commands = [
+    ["ruff", "check", "--fix"],
+    ["ruff", "format"]
+]
