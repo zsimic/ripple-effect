@@ -47,7 +47,7 @@ dev = [
 ]
 
 [project.scripts]
-ripple-effect = "ripple_effect:main"
+ripple-effect = "ripple_effect.__main__:main"
 
 [project.urls]
 Source = "https://github.com/zsimic/ripple-effect"

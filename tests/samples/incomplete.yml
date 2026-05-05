@@ -1,0 +1,5 @@
+# upstream is missing intentionally
+proving-grounds: /tmp/ripple
+downstream-projects:
+  - .
+  - https://github.com/foo/bar.git@main

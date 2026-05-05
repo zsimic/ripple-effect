@@ -1,3 +1,5 @@
+Read `DEVELOP.md` for conventions around how to iterate on this project
+
 # ripple-effect — Plan
 
 Working plan and progress for v1. `SPEC.md` is the source of truth for *what*
@@ -6,33 +8,42 @@ as we go.
 
 ## Steps
 
-- [x] **1. Config parsing** — load YAML, normalize, fail early on shape errors
-  (no external calls yet). Produced `src/ripple_effect/config.py`.
+- [x] **1. Config parsing** — load YAML, normalize, colored `show` output. Produced
+  `src/ripple_effect/config.py` (`ProjectRef`, `Testable`, `Config`) and a minimal
+  single-command CLI.
 
 - [x] **2. Tox config extraction** — moved tox / coverage / pytest config from
   `pyproject.toml` to `tox.ini`.
 
-- [ ] **3. uv-metadata integration** — call `uv_metadata.get_metadata_from_pip_spec`
+- [ ] **3. Multi-command CLI** — convert to `@click.group()` with `show`, `prepare`,
+  `run` subcommands. Add `--config` flag (group-level), `RIPPLE_CONFIG` env var,
+  and default config file `ripple-config.yml`. Pass loaded `Config` via click context
+  object to subcommands.
+
+- [ ] **4. uv-metadata integration** — call `uv_metadata.get_metadata_from_pip_spec`
   for each project ref to validate it and extract its `name`. Reject PyPI
   refs / wheels / sdists per SPEC. Add a resolved-project layer carrying per-
   project `name` and (for URLs) target clone path.
 
-- [ ] **4. Workspace prep** — for URL projects, `git clone` (or `git fetch --reset`)
+- [ ] **5. Workspace prep** — for URL projects, `git clone` (or `git fetch --reset`)
   into `proving-grounds/<name>/`. For local projects, sanity-check the folder.
+  Lives under the `prepare` subcommand.
 
-- [ ] **5. Prepare step** — auto-detect `uv.lock` vs `requirements.txt`; run
-  the configured prepare command (or the `auto` default).
+- [ ] **6. Prepare step** — auto-detect `uv.lock` vs `requirements.txt`; run
+  the configured prepare command (or the `auto` default). Also under `prepare`.
 
-- [ ] **6. Inject step** — editable-install check via `uv pip freeze`; run
+- [ ] **7. Inject step** — editable-install check via `uv pip freeze`; run
   `uv pip install -e <upstream>`. Special case: if upstream is a local folder
   already installed editable, reuse the venv; if pinned/wrong, recreate it.
+  Lives under the `run` subcommand (after prepare).
 
-- [ ] **7. Test step** — run each project's test command; capture pass/fail.
+- [ ] **8. Test step** — run each project's test command; capture pass/fail.
+  Also under `run`.
 
-- [ ] **8. Summary report** — pass/fail per project; exit code reflects overall.
+- [ ] **9. Summary report** — pass/fail per project; exit code reflects overall.
 
-- [ ] **9. Polish** — refine `--verbose` output; tidy error messages and exit
-  codes; sweep for missing test coverage and add high-level CLI cases.
+- [ ] **10. Polish** — tidy error messages and exit codes; sweep for missing
+  test coverage and add high-level CLI cases.
 
 ## Deferred (out of v1 scope per SPEC)
 

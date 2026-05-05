@@ -24,26 +24,46 @@ The inject step is the point of the tool and is not configurable — it always r
 
 ## Invocation
 
+ripple-effect is a multi-command CLI. The config file is resolved in this order:
+1. `--config` flag (explicit override)
+2. `RIPPLE_CONFIG` env var
+3. `ripple-config.yml` in the current working directory (default)
+
 ```bash
-uvx ripple-effect config.yml          # build venvs and run tests as described in config.yml
-ripple-effect config.yml              # same, if installed globally
-ripple-effect --dryrun config.yml     # show what would be done, without doing it
-ripple-effect --verbose config.yml    # show more output
+# Show the resolved configuration
+ripple-effect show
+ripple-effect --config ci-config.yml show
+
+# Prepare downstream project environments (clone + venv)
+ripple-effect prepare
+
+# Run the full pipeline: prepare → inject → test
+ripple-effect run
+
+# Global flags (available on all commands)
+ripple-effect --dryrun run         # show what would be done, without doing it
+ripple-effect --verbose show       # show more output / debug logging
+
+# Useful in CI — no flags needed when RIPPLE_CONFIG is set
+export RIPPLE_CONFIG=ci-config.yml
+ripple-effect run
 ```
 
 ---
 
 ## Project references
 
-Only two forms are accepted — for both `upstream` and `downstream-projects` entries:
+Two forms are accepted for `upstream` and `downstream-projects` entries:
 
 | Form         | Example                                                          | Behaviour                                              |
 |--------------|------------------------------------------------------------------|--------------------------------------------------------|
 | Local folder | `.` or `~/github/runez` or `/path/to/project`                   | Used as-is, no git operations                          |
 | Git URL      | Any URL form accepted by `uv-metadata` (see below)              | Cloned/updated into `proving-grounds/<name>/`          |
 
-PyPI refs (`requests`, `requests<2`), wheels, and sdists are **not** accepted — ripple-effect
-needs a `tests/` folder to run against, which only local folders and git repos can provide.
+PyPI refs (`requests`, `requests<2`), wheels, and sdists are **not** accepted for
+`downstream-projects` — ripple-effect needs a `tests/` folder to run against. The
+`upstream` field may eventually accept a PyPI spec (e.g. `pedantic==2.5.0rc1`) when
+only the inject step is needed, but that is out of scope for v1.
 
 ### Validation via `uv-metadata`
 
@@ -69,12 +89,13 @@ The `name` field from the metadata is used to name the workspace subfolder for g
 
 ```yaml
 # The upstream library under test. Accepts: local folder or git URL.
-# Default: current working directory (.).
+# Required — ripple-effect will abort with a clear error if missing.
 # Future: upstream-libs: [...] will allow multiple upstream libs in one run.
 upstream: .
 
 # Where to clone/cache downstream git repos.
-# May use ~ and env vars. Subfolders are named after each project's name (from uv-metadata).
+# Required when any downstream project is a git URL.
+# May use ~ and env vars (expanded at use time, not at parse time).
 proving-grounds: /tmp/ripple-proving-grounds
 
 # Optional global defaults, overridable per project.
@@ -85,15 +106,12 @@ defaults:
   test: ".venv/bin/pytest tests/"
 
 downstream-projects:
-  # Git URL (any form accepted by uv-metadata) — cloned/updated into proving-grounds/<name>/
+  # Plain string — git URL or local path (detected by leading . ~ or /)
   - https://github.com/codrsquad/portable-python.git@main
-  - git+https://github.com/codrsquad/pickley.git@main
-
-  # Local folder — used as-is, no git operations
   - ~/dev/my-other-project
 
-  # Per-project overrides (mapping form)
-  - url: https://github.com/org/project.git@main
+  # Mapping form — use source-ref: for the location, with optional overrides
+  - source-ref: https://github.com/org/project.git@main
     prepare: "hatch env create"         # project uses hatch instead of uv
     test: ".venv/bin/pytest tests/ -x"  # stop on first failure
 ```
@@ -102,16 +120,14 @@ downstream-projects:
 
 A project entry can be a plain string (shorthand) or a mapping with explicit keys:
 
-| Key       | Description                                                                 |
-|-----------|-----------------------------------------------------------------------------|
-| `url`     | Any URL form accepted by `uv-metadata` — cloned/updated into `proving-grounds/<name>/` |
-| `folder`  | Local path — used as-is, no git operations                                  |
-| `prepare` | Override the global `defaults.prepare` for this project                     |
-| `test`    | Override the global `defaults.test` for this project                        |
+| Key          | Description                                                                 |
+|--------------|-----------------------------------------------------------------------------|
+| `source-ref` | Local path or git URL — used as-is (local) or cloned into `proving-grounds/<name>/` |
+| `prepare`    | Override the global `defaults.prepare` for this project                     |
+| `test`       | Override the global `defaults.test` for this project                        |
 
-Plain string entries are tried against `uv-metadata` first; if that succeeds and the ref
-is not a local path, it is treated as a `url`. Local paths (`.`, `~`, `/`, or existing
-directories) are treated as `folder` without calling out to `uv-metadata`.
+Plain string entries are equivalent to `source-ref: <value>`. Local paths are detected by
+leading `.`, `~`, or `/`; everything else is treated as a git URL and handed to `uv-metadata`.
 
 ---
 
@@ -187,7 +203,9 @@ A future version could add first-class tox support with explicit strategies
 
 ```yaml
 - name: Run downstream integration tests
-  run: uvx ripple-effect ci-config.yml
+  env:
+    RIPPLE_CONFIG: ci-config.yml
+  run: uvx ripple-effect run
 ```
 
 With a `ci-config.yml`:
@@ -211,7 +229,7 @@ proving-grounds: ~/dev/ripple-workspace
 downstream-projects:
   - https://github.com/codrsquad/portable-python.git@main
   - ~/github/pickley        # local checkout, no git pull
-  - folder: ~/github/some-hatch-project
+  - source-ref: ~/github/some-hatch-project
     prepare: "hatch env create"   # project uses hatch rather than uv
 ```
 
@@ -219,7 +237,8 @@ downstream-projects:
 
 ## v1 scope
 
-- [ ] Config parsing (YAML)
+- [x] Config parsing (YAML) with `show` command
+- [ ] Multi-command CLI: `show`, `prepare`, `run` with `--config` / `RIPPLE_CONFIG` / default `ripple-config.yml`
 - [ ] Project reference validation via `uv-metadata` (fail early on invalid refs)
 - [ ] Project cloning/updating (`git clone` / `git fetch --reset`) for git URLs
 - [ ] Auto-detection of prepare strategy (`uv.lock` vs `requirements.txt`)
