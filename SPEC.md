@@ -27,7 +27,7 @@ The inject step is the point of the tool and is not configurable — it always r
 ripple-effect is a multi-command CLI. The config file is resolved in this order:
 1. `--config` flag (explicit override)
 2. `RIPPLE_CONFIG` env var
-3. `ripple-config.yml` in the current working directory (default)
+3. `ripple-effect.yml` in the current working directory (default)
 
 ```bash
 # Show the resolved configuration
@@ -238,7 +238,7 @@ downstream-projects:
 ## v1 scope
 
 - [x] Config parsing (YAML) with `show` command
-- [ ] Multi-command CLI: `show`, `prepare`, `run` with `--config` / `RIPPLE_CONFIG` / default `ripple-config.yml`
+- [ ] Multi-command CLI: `show`, `prepare`, `run` with `--config` / `RIPPLE_CONFIG` / default `ripple-effect.yml`
 - [ ] Project reference validation via `uv-metadata` (fail early on invalid refs)
 - [ ] Project cloning/updating (`git clone` / `git fetch --reset`) for git URLs
 - [ ] Auto-detection of prepare strategy (`uv.lock` vs `requirements.txt`)

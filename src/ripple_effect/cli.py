@@ -9,7 +9,7 @@ from ripple_effect.model import RippleSpec
 
 
 @runez.click.group()
-@click.option("--config", "-c", envvar="RIPPLE_CONFIG", default="ripple-config.yml", show_default=True, help="Config file")
+@click.option("--config", "-c", envvar="RIPPLE_CONFIG", default="ripple-effect.yml", show_default=True, help="Config file")
 @runez.click.dryrun("-n")
 @runez.click.debug("-v", "--verbose")
 @click.pass_context

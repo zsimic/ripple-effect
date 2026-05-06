@@ -17,7 +17,7 @@ as we go.
 
 - [ ] **3. Multi-command CLI** — convert to `@click.group()` with `show`, `prepare`,
   `run` subcommands. Add `--config` flag (group-level), `RIPPLE_CONFIG` env var,
-  and default config file `ripple-config.yml`. Pass loaded `Config` via click context
+  and default config file `ripple-effect.yml`. Pass loaded `Config` via click context
   object to subcommands.
 
 - [ ] **4. uv-metadata integration** — call `uv_metadata.get_metadata_from_pip_spec`

@@ -82,9 +82,25 @@ on top of the standard ruff lint rules:
 See `SPEC.md` for the config format and execution model, and `PLAN.md` for
 working progress.
 
-- **`src/ripple_effect/cli.py`** — click CLI entry point. Accepts a YAML
-  config file and top-level flags (`--dryrun`, `--verbose`).
-- **`src/ripple_effect/config.py`** — `load_config(path) -> Config` parses
-  YAML, applies defaults, and produces typed dataclasses (`Config`,
-  `UpstreamRef`, `DownstreamProject`). Pure parse + normalize; no external
-  calls.
+- **`src/ripple_effect/cli.py`** — click entry point: group command with
+  `show`, `prepare`, `run` subcommands. `--config` flag / `RIPPLE_CONFIG`
+  env var / `ripple-effect.yml` default. Loads a `RippleSpec` into
+  `ctx.obj`.
+- **`src/ripple_effect/model.py`** — all domain objects: `RippleSpec`,
+  `UpstreamLocalized`, `DownstreamLocalized`, `ProjectRef`, `VirtualEnv`,
+  `CommandSpec`. Each class owns its own prepare/run behaviour.
+
+## TODOs
+
+- **Detect `source-ref` changes for URL checkouts.** Currently if a URL
+  entry changes (e.g. branch added/changed: `foo.git` → `foo.git@main`),
+  `_clone_or_update()` does a `fetch + reset` on the existing clone without
+  knowing the target branch changed. The checkout silently stays on
+  whatever branch it was on.
+
+  Proposed fix: write the `source-ref` value to a small sentinel file
+  alongside each URL checkout (e.g. `proving-grounds/name/.ripple-source-ref`).
+  On the next run, compare the stored value with the current config. If they
+  differ, `rm -rf` the checkout and let `prepare()` do a fresh `git clone`.
+  Applicable only to URL refs (`.is_local` is False) — local folder refs are
+  used as-is and need no tracking.

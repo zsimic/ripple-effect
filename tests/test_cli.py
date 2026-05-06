@@ -37,3 +37,17 @@ def test_show(cli):
     assert "2 downstream projects:" in cli.logged.stdout
     assert "source-ref: ." in cli.logged.stdout
     assert "source-ref: https://github.com/foo/bar.git@main" in cli.logged.stdout
+
+
+def test_default_config(cli):
+    cfg = runez.to_path(cli.project_folder) / "ripple-effect.yml"
+    runez.copy(cfg, "ripple-effect.yml", logger=None)
+    cli.run("--dryrun", "prepare")
+    assert cli.succeeded
+    assert "git clone https://github.com/codrsquad/runez.git --branch main build/verify-runez/runez\n" in cli.logged
+    assert "git clone https://github.com/codrsquad/portable-python.git build/verify-runez/portable-python\n" in cli.logged
+    assert "uv pip install -e build/verify-runez/runez" in cli.logged
+
+    cli.run("--dryrun", "run")
+    assert cli.succeeded
+    assert "Testing ripple-effect...\nWould run: .venv/bin/pytest tests/" in cli.logged

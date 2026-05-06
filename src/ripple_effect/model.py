@@ -79,6 +79,8 @@ class VirtualEnv:
                 for req in reqs:
                     self.run_uv("pip", "install", "-r", req)
 
+                self.run_uv("pip", "install", "-e", ".")  # install the project itself
+
             else:
                 self.run_uv("sync")
 
@@ -153,9 +155,34 @@ class ProjectRef:
 
         return str(name)
 
+    def _clone_or_update(self):
+        """Clone or fetch-reset this project's git repo into proving_grounds."""
+        url, ref = split_git_ref(self.source_ref)
+        folder = self.local_folder
+        if folder.is_dir():
+            runez.run("git", "fetch", cwd=folder)
+            runez.run("git", "reset", "--hard", "FETCH_HEAD", cwd=folder)
+
+        else:
+            args = ["git", "clone", url]
+            if ref:
+                args += ["--branch", ref]
+
+            args.append(str(folder))
+            runez.ensure_folder(self.spec.proving_grounds_folder)
+            runez.run(*args)
+
 
 class UpstreamLocalized(ProjectRef):
     """The upstream library under test — injected editable into each downstream venv."""
+
+    def prepare(self):
+        """Clone upstream if it's a URL, nothing to do for local folders."""
+        runez.abort_if(not self.source_ref, "No upstream specified")
+        if not self.is_local:
+            self._clone_or_update()
+
+        print(f"upstream: {self.package_name} @ {runez.short(self.local_folder)}")
 
 
 class DownstreamLocalized(ProjectRef):
@@ -195,23 +222,6 @@ class DownstreamLocalized(ProjectRef):
             parts = shlex.split(self.test_cmd)
             r = runez.run(*parts, fatal=False, passthrough=True)
             return r.succeeded
-
-    def _clone_or_update(self):
-        """Clone or fetch-reset this project's git repo into proving_grounds."""
-        url, ref = split_git_ref(self.source_ref)
-        folder = self.local_folder
-        if folder.is_dir():
-            runez.run("git", "fetch", cwd=folder)
-            runez.run("git", "reset", "--hard", "FETCH_HEAD", cwd=folder)
-
-        else:
-            args = ["git", "clone", url]
-            if ref:
-                args += ["--branch", ref]
-
-            args.append(str(folder))
-            runez.ensure_folder(self.spec.proving_grounds_folder)
-            runez.run(*args)
 
 
 class RippleSpec:
@@ -268,8 +278,7 @@ class RippleSpec:
 
     def prepare(self):
         """Prepare all downstream project environments."""
-        runez.abort_if(not self.upstream.source_ref, "No upstream specified")
-        print(f"upstream: {self.upstream.package_name} @ {runez.short(self.upstream.local_folder)}")
+        self.upstream.prepare()
         for downstream in self.downstream_projects:
             print(f"\n{runez.bold(downstream.package_name)}: {runez.short(downstream.local_folder)}")
             downstream.prepare()
