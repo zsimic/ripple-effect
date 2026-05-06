@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
+import time
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -81,7 +83,7 @@ class VirtualEnv:
                 self.run_uv("sync")
 
         else:
-            runez.run(prepare_cmd, cwd=self.folder)
+            runez.run(*shlex.split(prepare_cmd), cwd=self.folder)
 
     def inject_upstream(self, upstream: UpstreamLocalized):
         """Inject upstream in editable mode, skip if already correctly installed."""
@@ -186,6 +188,14 @@ class DownstreamLocalized(ProjectRef):
         self.venv.ensure_venv(self.prepare_cmd)
         self.venv.inject_upstream(self.spec.upstream)
 
+    def run_tests(self) -> bool:
+        """Run the test suite, return True if passed."""
+        with runez.CurrentFolder(self.local_folder):
+            # runez.run() uses `which()` and gets fooled when program to run is a relative path (bug in runez)
+            parts = shlex.split(self.test_cmd)
+            r = runez.run(*parts, fatal=False, passthrough=True)
+            return r.succeeded
+
     def _clone_or_update(self):
         """Clone or fetch-reset this project's git repo into proving_grounds."""
         url, ref = split_git_ref(self.source_ref)
@@ -263,3 +273,22 @@ class RippleSpec:
         for downstream in self.downstream_projects:
             print(f"\n{runez.bold(downstream.package_name)}: {runez.short(downstream.local_folder)}")
             downstream.prepare()
+
+    def run(self):
+        """Prepare environments, run all test suites, report results."""
+        self.prepare()
+        results = []
+        for downstream in self.downstream_projects:
+            print(f"\nTesting {runez.bold(downstream.package_name)}...")
+            started = time.monotonic()
+            passed = downstream.run_tests()
+            results.append((downstream.package_name, passed, time.monotonic() - started))
+
+        print(f"\n{'─' * 50}")
+        all_passed = True
+        for name, passed, elapsed in results:
+            status = runez.green("PASSED") if passed else runez.red("FAILED")
+            print(f"  {name}: {status} ({elapsed:.1f}s)")
+            all_passed = all_passed and passed
+
+        runez.abort_if(not all_passed, "Some tests failed")

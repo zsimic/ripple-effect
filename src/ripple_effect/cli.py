@@ -39,4 +39,4 @@ def prepare(cfg: RippleSpec):
 def run(cfg: RippleSpec):
     """Run the full pipeline: prepare → inject → test."""
     runez.abort_if(not cfg.downstream_projects, "No downstream-projects specified")
-    print("(not yet implemented)")
+    cfg.run()

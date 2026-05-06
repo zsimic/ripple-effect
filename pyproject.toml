@@ -93,6 +93,9 @@ extend-select = [
 [tool.ruff.lint.isort]
 order-by-type = false
 
+[tool.pyright]
+include = ["src/", "tests/"]
+
 [tool.ruff.lint.mccabe]
 max-complexity = 19
 
