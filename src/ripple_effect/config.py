@@ -82,13 +82,13 @@ class Config:
     def represented(self) -> str:
         return runez.joined(self.representable_lines(), delimiter="\n")
 
-
-def load_config(config_path: Path | str) -> Config:
-    """Read and validate a YAML config file. Returns a normalized Config."""
-    path = Path(config_path).expanduser()
-    data = yaml.safe_load(path.read_text()) or {}
-    upstream = ProjectRef(data.get("upstream"))
-    proving_grounds = data.get("proving-grounds")
-    defaults = Testable.from_defaults(data.get("defaults") or {})
-    entries = data.get("downstream-projects") or []
-    return Config(path, upstream, proving_grounds, tuple(Testable.from_entry(e, defaults) for e in entries))
+    @classmethod
+    def from_file(cls, config_path: Path | str) -> Config:
+        """Read and validate a YAML config file. Returns a normalized Config."""
+        path = Path(config_path).expanduser()
+        data = yaml.safe_load(path.read_text()) or {}
+        upstream = ProjectRef(data.get("upstream"))
+        proving_grounds = data.get("proving-grounds")
+        defaults = Testable.from_defaults(data.get("defaults") or {})
+        entries = data.get("downstream-projects") or []
+        return Config(path, upstream, proving_grounds, tuple(Testable.from_entry(e, defaults) for e in entries))

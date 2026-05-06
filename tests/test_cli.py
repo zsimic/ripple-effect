@@ -13,18 +13,24 @@ def test_trivial(cli):
     assert cli.succeeded
     assert "Usage:" in cli.logged.stdout
 
-    cli.run("no-such-config.yml")
+    # Missing config file
+    cli.run("--config", "no-such.yml", "show")
     assert cli.failed
 
+    # Empty config → show succeeds (show works with any partial config)
     runez.write("sample.yml", "# placeholder\n", logger=None)
-    cli.run("sample.yml")
+    cli.run("--config", "sample.yml", "show")
+    assert cli.succeeded
+
+    # Empty config → run fails (needs downstream-projects)
+    cli.run("--config", "sample.yml", "run")
     assert cli.failed
-    assert "No downstream-projects specified" in cli.logged
+    assert "No downstream-projects" in cli.logged
 
 
-def test_minimal_valid_config(cli):
+def test_show(cli):
     sample = runez.to_path(cli.tests_folder) / "samples/incomplete.yml"
-    cli.run("-v", sample)
+    cli.run("--config", sample, "show")
     assert cli.succeeded
     assert "upstream: -missing-" in cli.logged.stdout
     assert "proving-grounds: /tmp/ripple" in cli.logged.stdout

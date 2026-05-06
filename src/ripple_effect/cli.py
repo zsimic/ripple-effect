@@ -3,20 +3,38 @@
 import click
 import runez
 
-from ripple_effect.config import load_config
+from ripple_effect.config import Config
 
 
-@click.command()
-@click.argument("config", type=click.Path(exists=True, dir_okay=False))
+@runez.click.group()
+@click.option("--config", "-c", envvar="RIPPLE_CONFIG", default="ripple-config.yml", show_default=True, help="Config file")
 @runez.click.dryrun("-n")
-@click.option("-v", "--verbose", is_flag=True, help="Show more output")
-def main(config: str, verbose: bool) -> None:
-    """Test a Python library against its downstream dependents.
+@runez.click.debug("-v", "--verbose")
+@click.pass_context
+def main(ctx, debug: bool, config: str):
+    """Test a Python library against its downstream dependents."""
+    runez.log.setup(debug=debug, console_format="%(levelname)s %(message)s", greetings="args: {argv}")
+    ctx.obj = Config.from_file(config)
 
-    CONFIG is a YAML file describing the library under test and the downstream
-    projects to run against it.
-    """
-    runez.log.setup(debug=verbose)
-    cfg = load_config(config)
-    runez.abort_if(not cfg.downstream_projects, "No downstream-projects specified")
+
+@main.command()
+@click.pass_obj
+def show(cfg):
+    """Show the resolved configuration."""
     print(cfg.represented())
+
+
+@main.command()
+@click.pass_obj
+def prepare(cfg):
+    """Prepare downstream project environments (clone + build venvs)."""
+    runez.abort_if(not cfg.downstream_projects, "No downstream-projects specified")
+    print("(not yet implemented)")
+
+
+@main.command()
+@click.pass_obj
+def run(cfg):
+    """Run the full pipeline: prepare → inject → test."""
+    runez.abort_if(not cfg.downstream_projects, "No downstream-projects specified")
+    print("(not yet implemented)")
