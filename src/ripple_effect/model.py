@@ -89,19 +89,20 @@ class VirtualEnv:
 
     def inject_upstream(self, upstream: UpstreamLocalized):
         """Inject upstream in editable mode, skip if already correctly installed."""
-        if self.is_upstream_editable(upstream):
+        if self.is_upstream_editable(upstream.local_folder):
             print(f"  {upstream.package_name} already installed editable")
 
         else:
             print(f"  injecting {upstream.package_name} (editable)")
             self.run_uv("pip", "install", "-e", str(upstream.local_folder))
 
-    def is_upstream_editable(self, upstream: UpstreamLocalized) -> bool:
-        """True if upstream is already installed as editable in this venv."""
+    def is_upstream_editable(self, upstream_folder: Path) -> bool:
+        """True if upstream (checked out in 'upstream_folder') is already installed as editable in this venv."""
         r = self.run_uv("pip", "freeze", dryrun=False, fatal=False, logger=None)
         if r.succeeded:
-            needle = f"-e file://{upstream.local_folder}"
-            return any(line.startswith(needle) for line in r.output.splitlines())
+            # Exact match: a downstream cloned under the upstream folder has an editable line that starts with the upstream path
+            needle = f"-e file://{upstream_folder}"
+            return any(line.strip() == needle for line in r.output.splitlines())
 
         return False
 
