@@ -38,7 +38,7 @@ default config file name, so no ``--config`` flag needed):
 
     # ripple-effect.yml
     upstream: .                          # the library under test (current folder)
-    proving-grounds: ./build/ripple      # where to clone downstream git repos
+    proving-grounds: ./build/ripple      # where to clone git repos (default: build/ripple-check)
 
     downstream-projects:
       - https://github.com/example/project-b.git@main
@@ -97,7 +97,7 @@ Global flags
 .. code-block:: bash
 
     ripple-effect --dryrun run      # show what would happen without doing it
-    ripple-effect --verbose run     # show debug output including every command run
+    ripple-effect --verbose run     # show debug output
     ripple-effect -c other.yml run  # use a different config file
 
 The config file is resolved in this order:
@@ -122,3 +122,28 @@ Mix local checkouts with remote repos freely:
       - source-ref: https://github.com/example/project-d.git@main
         prepare: "hatch env create"   # project uses hatch instead of uv
         test: ".venv/bin/pytest tests/ -x"
+
+Many downstream projects
+------------------------
+
+Group projects that share settings, and use ``source-prefix`` to list repos by name:
+
+.. code-block:: yaml
+
+    upstream: ~/github/mylib
+    proving-grounds: ~/dev/ripple-workspace
+    source-prefix: https://github.com/example/   # applies to bare names below
+    test: tox -r -e py                           # default test command
+
+    downstream-projects:
+      - project-b                                # https://github.com/example/project-b
+      - description: Repos with a typecheck tox env
+        test: tox -r -e py,typecheck
+        sources: [project-c, project-d, project-e@main]
+      - description: Repos not using tox
+        test: .venv/bin/pytest tests/
+        source-prefix: https://git.example.com/corp/
+        sources: [lib-a, lib-b]
+
+Settings resolve per project first, then group, then top level.
+See ``SPEC.md`` for the full config format.

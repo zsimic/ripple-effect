@@ -15,7 +15,7 @@ as we go.
 - [x] **2. Tox config extraction** — moved tox / coverage / pytest config from
   `pyproject.toml` to `tox.ini`.
 
-- [ ] **3. Multi-command CLI** — convert to `@click.group()` with `show`, `prepare`,
+- [x] **3. Multi-command CLI** — convert to `@click.group()` with `show`, `prepare`,
   `run` subcommands. Add `--config` flag (group-level), `RIPPLE_CONFIG` env var,
   and default config file `ripple-effect.yml`. Pass loaded `Config` via click context
   object to subcommands.
@@ -29,7 +29,7 @@ as we go.
   into `proving-grounds/<name>/`. For local projects, sanity-check the folder.
   Lives under the `prepare` subcommand.
 
-- [ ] **6. Prepare step** — auto-detect `uv.lock` vs `requirements.txt`; run
+- [x] **6. Prepare step** — auto-detect `requirements.txt` vs `uv sync`; run
   the configured prepare command (or the `auto` default). Also under `prepare`.
 
 - [ ] **7. Inject step** — editable-install check via `uv pip freeze`; run
@@ -37,17 +37,41 @@ as we go.
   already installed editable, reuse the venv; if pinned/wrong, recreate it.
   Lives under the `run` subcommand (after prepare).
 
-- [ ] **8. Test step** — run each project's test command; capture pass/fail.
+- [x] **8. Test step** — run each project's test command; capture pass/fail.
   Also under `run`.
 
-- [ ] **9. Summary report** — pass/fail per project; exit code reflects overall.
+- [x] **9. Summary report** — pass/fail per project; exit code reflects overall.
 
 - [ ] **10. Polish** — tidy error messages and exit codes; sweep for missing
   test coverage and add high-level CLI cases.
 
+- [x] **11. Top-level settings** — read `prepare` / `test` at the top level, drop
+  `defaults:`.
+
+- [x] **12. Groups** — `sources:` entries with optional `description`, and their own
+  `source-prefix` / `prepare` / `test`. Expand into downstream projects, resolving
+  settings project → group → top level → built-in default. `show` and the run
+  summary display group descriptions. Validate keys at every level (top level,
+  group, project): unknown keys, and a mapping with both or neither of `source-ref`
+  / `sources`, abort early with a clear error.
+
+- [x] **13. source-prefix** — read at top level and group level, prepend to bare names
+  (neither URL nor local path), error early on a bare name with no prefix in effect.
+
+- [x] **14. Command logging** — `logged_run()` helper (`runez.run(..., logger=print)`),
+  used for every command run on the user's behalf (git, prepare, inject, test).
+  Internal probes (`is_healthy`, `uv pip freeze`) drop their `logger=None`: runez's default
+  (debug-level) logger shows them with `--verbose`.
+  Not a global `default_logger=print`: that would also print runez's file chatter
+  (`ensure_folder()` etc.).
+
+- [ ] **15. tox support** — see "tox" in SPEC: build an upstream wheel once per run,
+  `UV_OVERRIDE` pointing at it for tox-based test commands, verify the recreated
+  `.tox/` envs used it, validation problem for tox without `-r`. Settle the
+  remaining "To ponder" items in SPEC first.
+
 ## Deferred (out of v1 scope per SPEC)
 
-- tox support for downstream projects (workaround documented in SPEC).
 - Parallel project execution.
 - Caching venvs across runs.
 - Multiple upstream libraries (`upstream-libs: [...]`).

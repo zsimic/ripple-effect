@@ -48,15 +48,15 @@ def test_minimal_valid_config(cli):
     runez.write(
         "sample.yml",
         """
-proving-grounds: /work/ripple
+upstream: ~/github/runez
 downstream-projects:
   - .
 """,
         logger=None,
     )
-    cli.run("sample.yml")
+    cli.run("-c", "sample.yml", "show")
     assert cli.succeeded
-    assert "downstream projects: 1" in cli.logged.stdout
+    assert "1 downstream project:" in cli.logged.stdout
 ```
 
 ## Style
@@ -87,8 +87,10 @@ working progress.
   env var / `ripple-effect.yml` default. Loads a `RippleSpec` into
   `ctx.obj`.
 - **`src/ripple_effect/model.py`** — all domain objects: `RippleSpec`,
-  `UpstreamLocalized`, `DownstreamLocalized`, `ProjectRef`, `VirtualEnv`,
-  `CommandSpec`. Each class owns its own prepare/run behaviour.
+  `UpstreamLocalized`, `DownstreamLocalized`, `DownstreamGroup`, `ProjectRef`,
+  `VirtualEnv`, `ProjectSettings`. Each class owns its own prepare/run behaviour.
+  `RippleSpec` validates the whole config when loading it (see "Validation" in
+  `SPEC.md`).
 
 ## TODOs
 
