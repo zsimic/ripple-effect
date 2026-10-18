@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
+from typing import Any
 
 import runez
 import yaml
@@ -38,7 +39,7 @@ class CommandSpec:
     test: str
 
     @classmethod
-    def from_config(cls, data: dict | None) -> CommandSpec:
+    def from_config(cls, data: dict[str, Any] | None) -> CommandSpec:
         """Parse prepare/test commands from config data, applying defaults."""
         data = data or {}
         return cls(
@@ -141,7 +142,7 @@ class ProjectRef:
         return str(self.local_folder) if self.is_local else self.source_ref
 
     @cached_property
-    def package_metadata(self) -> dict:
+    def package_metadata(self) -> dict[str, Any]:
         """Package metadata dict from uv_metadata."""
         from uv_metadata import get_metadata_from_pip_spec
 
@@ -189,7 +190,7 @@ class UpstreamLocalized(ProjectRef):
 class DownstreamLocalized(ProjectRef):
     """A downstream project to test the upstream library against."""
 
-    def __init__(self, spec: RippleSpec, entry: dict | str):
+    def __init__(self, spec: RippleSpec, entry: dict[str, Any] | str):
         if isinstance(entry, str):
             entry = {"source-ref": entry}
 
@@ -230,11 +231,11 @@ class RippleSpec:
 
     def __init__(self, config_path: Path):
         self.config_path = config_path
-        data = yaml.safe_load(config_path.read_text()) or {}
+        data: dict[str, Any] = yaml.safe_load(config_path.read_text()) or {}
         self.upstream = UpstreamLocalized(self, data.get("upstream"))
         self.proving_grounds = data.get("proving-grounds") or ""
         self.defaults = CommandSpec.from_config(data.get("defaults"))
-        entries = data.get("downstream-projects") or []
+        entries: list[dict[str, Any] | str] = data.get("downstream-projects") or []
         self.downstream_projects = tuple(DownstreamLocalized(self, e) for e in entries)
 
     @classmethod

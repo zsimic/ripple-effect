@@ -13,8 +13,8 @@ tox -e style
 # Auto-fix linting/formatting with ruff
 tox -e reformat
 
-# Run type checking
-tox -e typecheck
+# Run a type checker (also: pyrefly, pyright, mypy, zuban, basedpyright)
+tox -e ty
 ```
 
 ## Testing
