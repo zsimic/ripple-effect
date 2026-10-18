@@ -55,9 +55,10 @@ Then:
 ripple-effect will:
 
 1. Clone (or update) each downstream project into ``proving-grounds``
-2. Create a venv for each using ``uv sync`` or ``requirements.txt``
+2. Create a venv for each using ``uv sync`` or ``requirements.txt`` (for ``pytest`` test commands)
 3. Inject your library in editable mode (``uv pip install -e .``)
-4. Run each project's test suite
+4. Run each project's test commands: ``pytest ...`` from that venv, ``tox -r ...`` with a wheel of
+   your library forced in its envs (via ``UV_OVERRIDE``), verifying they really used your library
 5. Report pass / fail per project with timing
 
 Real example — this repo's own ``ripple-effect.yml``:
@@ -121,7 +122,7 @@ Mix local checkouts with remote repos freely:
       - ~/dev/project-c               # local checkout, no git operations
       - source-ref: https://github.com/example/project-d.git@main
         prepare: "hatch env create"   # project uses hatch instead of uv
-        test: ".venv/bin/pytest tests/ -x"
+        test: "pytest tests/ -x"
 
 Many downstream projects
 ------------------------
@@ -141,7 +142,7 @@ Group projects that share settings, and use ``source-prefix`` to list repos by n
         test: tox -r -e py,typecheck
         sources: [project-c, project-d, project-e@main]
       - description: Repos not using tox
-        test: .venv/bin/pytest tests/
+        test: pytest
         source-prefix: https://git.example.com/corp/
         sources: [lib-a, lib-b]
 

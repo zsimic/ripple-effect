@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shlex
+import sys
 import time
+import urllib.parse
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -13,12 +17,13 @@ from typing import Any
 
 import runez
 import yaml
+from runez.pyenv import PypiStd
 
 # Valid config keys, per level (see SPEC.md)
 TOP_LEVEL_KEYS = ("upstream", "proving-grounds", "source-prefix", "prepare", "test", "downstream-projects")
 GROUP_KEYS = ("description", "source-prefix", "prepare", "test", "sources")
 PROJECT_KEYS = ("source-ref", "prepare", "test")
-LIST_KEYS = ("downstream-projects", "sources")  # All other keys have string values
+LIST_KEYS = ("downstream-projects", "sources")  # Keys with a list value, 'test' is a string or a list, others are strings
 DEFAULT_PROVING_GROUNDS = "build/ripple-check"  # Relative to the config file's folder, 'build/' is typically git-ignored
 
 
@@ -41,6 +46,27 @@ def represented(key: str, value, indent="") -> str:
     """Colored representation of a key/value pair."""
     value = runez.green(runez.short(value)) if value else runez.red("-missing-")
     return f"{indent}{key}: {value}"
+
+
+def outcome_line(label: str, failure: str | None, elapsed: float) -> str:
+    """Line of the run summary: PASSED if 'failure' is None (FAILED otherwise, stating 'failure' if not empty)."""
+    status = runez.green("PASSED") if failure is None else runez.red("FAILED")
+    return f"{label}: {status} ({elapsed:.1f}s){f': {failure}' if failure else ''}"
+
+
+def installed_from(venv: Path, name: str) -> str | None:
+    """Where package 'name' was installed from in 'venv': its URL, its version if from an index, None if not installed."""
+    wanted = PypiStd.std_package_name(name)
+    for dist_info in venv.glob("lib/python*/site-packages/*.dist-info"):
+        dist_name, _, version = dist_info.name.removesuffix(".dist-info").partition("-")
+        if PypiStd.std_package_name(dist_name) == wanted:
+            direct_url = dist_info / "direct_url.json"  # Present for direct URL installs only (PEP 610)
+            if direct_url.exists():
+                return urllib.parse.unquote(json.loads(direct_url.read_text())["url"])
+
+            return version
+
+    return None
 
 
 def is_local_path(source_ref: str) -> bool:
@@ -73,16 +99,26 @@ class ProjectSettings:
     """Settings of downstream projects: how to prepare and test them, and how to complete bare names."""
 
     prepare: str = "auto"
-    test: str = ".venv/bin/pytest tests/"
+    test: tuple[str, ...] = ("pytest",)
     source_prefix: str | None = None
 
     def overridden(self, data: dict[str, Any]) -> ProjectSettings:
         """These settings, with the ones stated in config 'data' (if any) taking precedence."""
+        test = data.get("test", self.test)
         return ProjectSettings(
             prepare=data.get("prepare", self.prepare),
-            test=data.get("test", self.test),
+            test=(test,) if isinstance(test, str) else tuple(test),
             source_prefix=data.get("source-prefix", self.source_prefix),
         )
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """Outcome of running one test command."""
+
+    command: str
+    failure: str | None  # Why it failed, None if it passed
+    elapsed: float
 
 
 class VirtualEnv:
@@ -156,6 +192,151 @@ class VirtualEnv:
                 yield path
 
 
+class RunWith(ABC):
+    """Runs a test command from config, verifying that it really tests the upstream checkout (see "Test commands" in SPEC.md)."""
+
+    needs_venv = False  # True if the command runs from the project's .venv/ (which then gets prepared, with upstream injected)
+    needs_upstream_wheel = False  # True if the command needs an upstream wheel (built once per run, during prepare)
+
+    def __init__(self, project: DownstreamLocalized, command: str):
+        self.project = project
+        self.command = command
+        self.args = shlex.split(command)
+
+    @staticmethod
+    def handler_for(args: list[str]) -> type[RunWith] | None:
+        """Handler for test command 'args', if there is one."""
+        if args and args[0] == "pytest":
+            return RunWithPytest
+
+        if RunWithTox.tox_args(args) is not None:
+            return RunWithTox
+
+        return None
+
+    @staticmethod
+    def for_command(project: DownstreamLocalized, command: str) -> RunWith:
+        """Handler running test 'command' for 'project'."""
+        handler = RunWith.handler_for(shlex.split(command))
+        if handler is None:  # pragma: no cover, test commands are validated when config is loaded
+            raise ValueError(f"No handler for test command '{command}'")
+
+        return handler(project, command)
+
+    @staticmethod
+    def problem_with(command: str) -> str | None:
+        """Why test 'command' can't be used, if it can't: ripple-effect must know how to verify it."""
+        try:
+            args = shlex.split(command)
+
+        except ValueError as e:
+            return f"test command '{command}': {e}"
+
+        handler = RunWith.handler_for(args)
+        if handler:
+            problem = handler.args_problem(args)
+
+        elif any("pytest" in arg for arg in args):
+            problem = "state it as 'pytest ...', ripple-effect runs pytest from the project's .venv/"
+            if args[:2] == ["uv", "run"]:
+                problem += " (`uv run` would sync .venv/, replacing the injected upstream)"
+
+        else:
+            problem = "not supported yet, ripple-effect can't verify that it runs against the upstream checkout"
+            problem += " (supported: 'pytest ...', tox), contributions welcome"
+
+        return f"test command '{command}': {problem}" if problem else None
+
+    @classmethod
+    def args_problem(cls, args: list[str]) -> str | None:
+        """Problem with the arguments of a test command this handler recognized, if any."""
+        return None
+
+    @abstractmethod
+    def run(self) -> str | None:
+        """Run this test command, return why it failed (None if it passed)."""
+
+    def run_command(self, program, *args) -> str | None:
+        """Run 'program' with 'args' (shown), return why it failed (None if it passed)."""
+        r = logged_run(program, *args, fatal=False, passthrough=True)
+        return None if r.succeeded else f"exit code {r.exit_code}"
+
+
+class RunWithPytest(RunWith):
+    """`pytest ...`, ran from the project's .venv/ (where the upstream gets injected editable)."""
+
+    needs_venv = True
+
+    def run(self) -> str | None:
+        venv = self.project.venv
+        pytest = venv.venv_folder / "bin/pytest"
+        upstream = self.project.spec.upstream
+        if not runez.DRYRUN:  # Nothing got prepared in dryrun mode, nothing to verify
+            if not pytest.exists():
+                return "pytest is not installed in .venv/"
+
+            if not venv.is_upstream_editable(upstream.local_folder):
+                return f"{upstream.package_name} is not installed editable in .venv/"
+
+        return self.run_command(pytest, *self.args[1:])
+
+
+class RunWithTox(RunWith):
+    """A tox run: `tox ...`, or via a wrapper (`uvx tox ...`, `my-wrapper tox ...`)."""
+
+    @staticmethod
+    def tox_args(args: list[str]) -> list[str] | None:
+        """tox's own arguments in 'args' (after the `tox` word), None if 'args' doesn't run tox."""
+        for i, arg in enumerate(args):
+            if os.path.basename(arg) == "tox":
+                return args[i + 1 :]
+
+        return None
+
+    @classmethod
+    def args_problem(cls, args: list[str]) -> str | None:
+        # Only simple forms are recognized (`tox -r ...`, `tox -re py`, `tox --recreate ...`), see "Test commands" in SPEC.md
+        first_option = next((arg for arg in cls.tox_args(args) or [] if arg.startswith("-")), "")
+        if not first_option.startswith(("-r", "--recreate")):
+            return "tox's first option must be -r (or --recreate, e.g. 'tox -re py'), tox otherwise reuses existing envs"
+
+        return None
+
+    needs_upstream_wheel = True
+
+    def run(self) -> str | None:
+        overrides = str(self.project.spec.upstream.overrides_file)
+        existing = os.environ.get("UV_OVERRIDE")  # uv accepts a space-separated list of files, keep any existing ones
+        env = dict(os.environ, UV_OVERRIDE=runez.joined(overrides, existing))
+        print(f"UV_OVERRIDE={shlex.quote(env['UV_OVERRIDE'])}")  # runez doesn't show env vars, allows to reproduce the run by hand
+        before = self.tox_envs()
+        r = logged_run(*self.args, env=env, fatal=False, passthrough=True)
+        problems = [] if r.succeeded else [f"exit code {r.exit_code}"]
+        if not runez.DRYRUN:
+            problems.extend(self.verification_problems(before))
+
+        return ", ".join(problems) or None
+
+    def tox_envs(self) -> dict[Path, float]:
+        """tox envs in the project's .tox/ folder (excluding internal ones such as .pkg), with the mtime of their pyvenv.cfg."""
+        return {cfg.parent: cfg.stat().st_mtime for cfg in (self.project.local_folder / ".tox").glob("[!.]*/pyvenv.cfg")}
+
+    def verification_problems(self, before: dict[Path, float]) -> list[str]:
+        """Why the tox envs recreated by this run may not have tested the upstream checkout ('before': envs prior to the run)."""
+        recreated = sorted(env for env, mtime in self.tox_envs().items() if before.get(env) != mtime)
+        if not recreated:
+            return ["couldn't verify that tox used the upstream checkout: no recreated env found in .tox/"]
+
+        upstream = self.project.spec.upstream
+        problems = []
+        for env in recreated:
+            installed = installed_from(env, upstream.package_name)
+            if installed and installed != f"file://{upstream.wheel}":  # Envs without upstream (style etc.) are fine
+                problems.append(f"tox env '{env.name}' has {upstream.package_name} {installed} instead of the upstream wheel")
+
+        return problems
+
+
 class ProjectRef:
     """A reference to a project — a local folder or a git URL."""
 
@@ -227,6 +408,24 @@ class UpstreamLocalized(ProjectRef):
         if not self.is_local:
             self._clone_or_update()
 
+    @cached_property
+    def wheel(self) -> Path:
+        """Wheel of the upstream checkout, built fresh on first use (once per run), see "tox" in SPEC.md."""
+        folder = self.spec.ripple_folder / "upstream"
+        runez.delete(folder)
+        logged_run("uv", "build", "--wheel", "-o", folder, self.local_folder)
+        if runez.DRYRUN:
+            return folder / f"{self.package_name}.whl"  # Placeholder, nothing got built
+
+        return next(folder.glob("*.whl"))
+
+    @cached_property
+    def overrides_file(self) -> Path:
+        """uv overrides file, making uv install the upstream wheel in place of any other version of the upstream."""
+        path = self.spec.ripple_folder / "overrides.txt"
+        runez.write(path, f"{self.package_name} @ file://{self.wheel}\n")
+        return path
+
 
 class DownstreamLocalized(ProjectRef):
     """A downstream project to test the upstream library against."""
@@ -234,13 +433,24 @@ class DownstreamLocalized(ProjectRef):
     def __init__(self, spec: RippleSpec, source_ref: str, settings: ProjectSettings):
         super().__init__(spec, source_ref)
         self.prepare_cmd = settings.prepare
-        self.test_cmd = settings.test
+        self.test_commands = tuple(RunWith.for_command(self, command) for command in settings.test)
 
     def representable_lines(self, indent=""):
         """Lines for display in `show` output."""
         yield represented("source-ref", self.source_ref, indent=f"{indent} - ")
         yield represented("prepare", self.prepare_cmd, indent=f"{indent}   ")
-        yield represented("test", self.test_cmd, indent=f"{indent}   ")
+        if len(self.test_commands) == 1:
+            yield represented("test", self.test_commands[0].command, indent=f"{indent}   ")
+
+        else:
+            yield f"{indent}   test:"
+            for test_command in self.test_commands:
+                yield f"{indent}     - {runez.green(runez.short(test_command.command))}"
+
+    @cached_property
+    def needs_venv(self) -> bool:
+        """True if a test command runs from .venv/, which then needs to be prepared (tox for example uses its own envs)."""
+        return any(test_command.needs_venv for test_command in self.test_commands)
 
     @cached_property
     def venv(self) -> VirtualEnv:
@@ -248,20 +458,25 @@ class DownstreamLocalized(ProjectRef):
         return VirtualEnv(self.local_folder)
 
     def prepare(self):
-        """Clone/update if URL, ensure venv, inject upstream."""
+        """Clone/update if URL, ensure venv and inject upstream (if a test command needs the venv)."""
         if not self.is_local:
             self._clone_or_update()
 
-        self.venv.ensure_venv(self.prepare_cmd)
-        self.venv.inject_upstream(self.spec.upstream)
+        if self.needs_venv:
+            self.venv.ensure_venv(self.prepare_cmd)
+            self.venv.inject_upstream(self.spec.upstream)
 
-    def run_tests(self) -> bool:
-        """Run the test suite, return True if passed."""
+    def run_tests(self) -> list[Outcome]:
+        """Run all test commands (even after one fails), return their outcomes."""
+        outcomes = []
         with runez.CurrentFolder(self.local_folder):
             # runez.run() uses `which()` and gets fooled when program to run is a relative path (bug in runez)
-            parts = shlex.split(self.test_cmd)
-            r = logged_run(*parts, fatal=False, passthrough=True)
-            return r.succeeded
+            for test_command in self.test_commands:
+                started = time.monotonic()
+                failure = test_command.run()
+                outcomes.append(Outcome(test_command.command, failure, time.monotonic() - started))
+
+        return outcomes
 
 
 class DownstreamGroup:
@@ -336,22 +551,30 @@ class RippleSpec:
 
         valid = {}
         for key, value in data.items():
-            problem = None
+            problems = []
             if key not in allowed:
-                problem = f"unknown key '{key}', expected one of: {', '.join(allowed)}"
+                problems.append(f"unknown key '{key}', expected one of: {', '.join(allowed)}")
 
             elif key in LIST_KEYS:
                 if not value or not isinstance(value, list):
-                    problem = f"'{key}' must be a non-empty list"
+                    problems.append(f"'{key}' must be a non-empty list")
+
+            elif key == "test":
+                commands = [value] if isinstance(value, str) else value
+                if not commands or not isinstance(commands, list) or not all(c and isinstance(c, str) for c in commands):
+                    problems.append("'test' must be a non-empty string, or a non-empty list of them")
+
+                else:
+                    problems.extend(problem for problem in map(RunWith.problem_with, commands) if problem)
 
             elif not value or not isinstance(value, str):
-                problem = f"'{key}' must be a non-empty string"
+                problems.append(f"'{key}' must be a non-empty string")
 
             elif key == "source-prefix" and is_bare_name(value):
-                problem = f"'source-prefix' must be a URL or a local path, got '{value}'"
+                problems.append(f"'source-prefix' must be a URL or a local path, got '{value}'")
 
-            if problem:
-                self.problems.append(f"{where}: {problem}")
+            if problems:
+                self.problems.extend(f"{where}: {problem}" for problem in problems)
 
             else:
                 valid[key] = value
@@ -409,6 +632,11 @@ class RippleSpec:
         """Resolved proving grounds folder."""
         return self.resolved_path(self.proving_grounds)
 
+    @cached_property
+    def ripple_folder(self) -> Path:
+        """Folder where ripple-effect keeps its own files (upstream wheel etc.)."""
+        return self.proving_grounds_folder / ".ripple"
+
     def resolved_path(self, source_ref: str) -> Path:
         """Resolve a source_ref to an absolute path, relative to config_folder if not absolute."""
         expanded = os.path.expandvars(os.path.expanduser(source_ref))
@@ -434,6 +662,9 @@ class RippleSpec:
     def prepare(self):
         """Prepare all downstream project environments."""
         self.upstream.prepare()
+        if any(test_command.needs_upstream_wheel for project in self.downstream_projects for test_command in project.test_commands):
+            print(f"  uv overrides for tox runs: {runez.short(self.upstream.overrides_file)}")
+
         for downstream in self.downstream_projects:
             print(f"\n{runez.bold(downstream.package_name)}: {runez.short(downstream.local_folder)}")
             downstream.prepare()
@@ -441,21 +672,30 @@ class RippleSpec:
     def run(self) -> None:
         """Prepare environments, run all test suites, report results."""
         self.prepare()
-        results: dict[DownstreamLocalized, tuple[bool, float]] = {}
+        results: dict[DownstreamLocalized, list[Outcome]] = {}
         for downstream in self.downstream_projects:
             print(f"\nTesting {runez.bold(downstream.package_name)}...")
-            started = time.monotonic()
-            passed = downstream.run_tests()
-            results[downstream] = (passed, time.monotonic() - started)
+            results[downstream] = downstream.run_tests()
 
         print(f"\n{'─' * 50}")
+        fail_count = 0
         for group in self.groups:
             if group.description:
                 print(f"  {runez.bold(group.description)}:")
 
             for downstream in group.projects:
-                passed, elapsed = results[downstream]
-                status = runez.green("PASSED") if passed else runez.red("FAILED")
-                print(f"  {group.indent}{downstream.package_name}: {status} ({elapsed:.1f}s)")
+                outcomes = results[downstream]
+                failures = [outcome.failure for outcome in outcomes if outcome.failure]
+                fail_count += len(failures)
+                elapsed = sum(outcome.elapsed for outcome in outcomes)
+                if len(outcomes) == 1:
+                    print(outcome_line(f"  {group.indent}{downstream.package_name}", outcomes[0].failure, elapsed))
 
-        runez.abort_if(not all(passed for passed, _ in results.values()), "Some tests failed")
+                else:
+                    print(outcome_line(f"  {group.indent}{downstream.package_name}", "" if failures else None, elapsed))
+                    for outcome in outcomes:
+                        print(outcome_line(f"    {group.indent}{outcome.command}", outcome.failure, outcome.elapsed))
+
+        if fail_count:
+            print(runez.red(f"{runez.plural(fail_count, 'test')} failed"))
+            sys.exit(1)

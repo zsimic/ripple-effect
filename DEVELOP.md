@@ -88,7 +88,9 @@ working progress.
   `ctx.obj`.
 - **`src/ripple_effect/model.py`** — all domain objects: `RippleSpec`,
   `UpstreamLocalized`, `DownstreamLocalized`, `DownstreamGroup`, `ProjectRef`,
-  `VirtualEnv`, `ProjectSettings`. Each class owns its own prepare/run behaviour.
+  `VirtualEnv`, `ProjectSettings`, `Outcome`, and the test command handlers
+  (`RunWith` base, `RunWithPytest`, `RunWithTox`, see "Test commands" in `SPEC.md`).
+  Each class owns its own prepare/run behaviour.
   `RippleSpec` validates the whole config when loading it (see "Validation" in
   `SPEC.md`).
 

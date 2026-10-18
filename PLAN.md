@@ -65,10 +65,19 @@ as we go.
   Not a global `default_logger=print`: that would also print runez's file chatter
   (`ensure_folder()` etc.).
 
-- [ ] **15. tox support** — see "tox" in SPEC: build an upstream wheel once per run,
-  `UV_OVERRIDE` pointing at it for tox-based test commands, verify the recreated
-  `.tox/` envs used it, validation problem for tox without `-r`. Settle the
-  remaining "To ponder" items in SPEC first.
+- [x] **15. Test commands** — see "Test commands" in SPEC. `test` accepts a list,
+  default becomes `pytest`. Each command gets a handler (`RunWithPytest`,
+  `RunWithTox`) holding the command, with a config-time check (unsupported command,
+  pytest from another venv, `uv run` with options, tox without `-r`) and a
+  verification that the upstream is the one installed. `RunWithPytest` runs
+  `pytest ...` from the project's `.venv/` (other forms of invoking pytest are
+  config problems). `RunWithTox` only checks `-r` so far, see step 16. Prepare/inject the
+  `.venv/` only for projects with a pytest command. Run summary shows each
+  command's outcome when a project has several.
+
+- [x] **16. tox support** — see "tox" in SPEC: build an upstream wheel once per run,
+  `UV_OVERRIDE` pointing at it for tox commands, `RunWithTox` verifies the
+  recreated `.tox/` envs used it. An existing `UV_OVERRIDE` is kept (ours is added).
 
 ## Deferred (out of v1 scope per SPEC)
 
