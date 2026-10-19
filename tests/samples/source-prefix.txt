@@ -1,0 +1,30 @@
+## Config
+config_path: tests/samples/source-prefix.yml
+upstream: ~/github/runez
+proving-grounds: build/ripple-check
+8 downstream projects:
+ - source-ref: https://git.example.com/corp/lib-a
+   prepare: auto
+   test: pytest
+ - source-ref: https://git.example.com/corp/lib-b@main
+   prepare: auto
+   test: pytest
+ - source-ref: git@github.com:foo/bar.git
+   prepare: auto
+   test: pytest
+ - source-ref: https://github.com/foo/baz.git
+   prepare: auto
+   test: pytest
+ - source-ref: ./local
+   prepare: auto
+   test: pytest
+ - source-ref: https://git.example.com/corp/lib-c
+   prepare: auto
+   test: pytest
+ - Local checkouts:
+   - source-ref: ~/dev/tool-a
+     prepare: auto
+     test: pytest
+   - source-ref: /opt/tool-b
+     prepare: auto
+     test: pytest

@@ -1,0 +1,4 @@
+# A key appearing twice: YAML would silently keep the last one, ripple-effect reports it
+upstream: .
+upstream: ..
+downstream-projects: [./foo]

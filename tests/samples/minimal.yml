@@ -1,0 +1,5 @@
+# proving-grounds not stated: defaults to build/ripple-check
+upstream: ~/github/runez
+downstream-projects:
+  - .
+  - https://github.com/foo/bar.git@main

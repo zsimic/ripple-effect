@@ -1,0 +1,23 @@
+## Config
+config_path: tests/samples/groups.yml
+upstream: ~/github/runez
+proving-grounds: build/ripple-check
+5 downstream projects:
+ - source-ref: ./foo
+   prepare: auto
+   test: tox -re py
+ - source-ref: ./bar
+   prepare: uv sync --all-groups
+   test: pytest tests/ -x
+ - Repos with a typecheck target:
+   - source-ref: ./baz
+     prepare: auto
+     test: tox -re py,typecheck
+   - source-ref: ./qux
+     prepare: auto
+     test:
+       - pytest
+       - tox -re typecheck
+ - source-ref: ./quux
+   prepare: auto
+   test: tox -re py

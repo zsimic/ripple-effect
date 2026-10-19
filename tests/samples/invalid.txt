@@ -1,0 +1,4 @@
+## Errors
+Invalid config tests/samples/invalid.yml:
+- invalid YAML: mapping values are not allowed here
+  in "tests/samples/invalid.yml", line 1, column 9

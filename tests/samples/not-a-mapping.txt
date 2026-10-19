@@ -1,0 +1,9 @@
+## Config
+config_path: tests/samples/not-a-mapping.yml
+upstream: -missing-
+proving-grounds: build/ripple-check
+0 downstream projects:
+
+## Errors
+Invalid config tests/samples/not-a-mapping.yml:
+- top level: expected a mapping

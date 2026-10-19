@@ -1,0 +1,27 @@
+# Each entry below has a problem, all are reported at once: ripple-effect -c tests/samples/bad-config.yml show
+upstream: [a]                 # Not a string
+defaults:                     # Unknown key (top-level `prepare` and `test` replaced it)
+  test: pytest
+source-prefix: corp/          # Neither a URL nor a local path
+downstream-projects:
+  - ./foo
+  -                           # Empty entry
+  - test: pytest              # Neither 'source-ref' nor 'sources'
+  - description: Typo
+    repos: [./bar]            # Unknown key
+  - source-ref: ./bar
+    sources: [./baz]          # A project can't have 'sources'
+  - sources: [{sources: [./baz]}, {test: pytest}]  # Groups don't nest, missing 'source-ref'
+  - sources: []
+  - sources: [./foo]          # Listed twice
+  - lib-a                     # Bare name, and no valid 'source-prefix' in effect
+  - source-prefix: ~/dev/
+    sources: [foo, ~/dev/foo]   # Listed twice, once 'foo' gets its prefix
+  - description: Test commands
+    sources:
+      - source-ref: ./not-pytest
+        test: [hatch run test, .venv/bin/pytest, uv run pytest, "pytest 'a"]
+      - source-ref: ./not-recreating
+        test: [tox, tox -e py, tox -vre py, uvx tox -e py, tox -e py -- -r]
+      - source-ref: ./not-strings
+        test: [pytest, 1]
