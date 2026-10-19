@@ -51,6 +51,7 @@ ripple-effect = "ripple_effect.__main__:main"
 
 [project.urls]
 Source = "https://github.com/zsimic/ripple-effect"
+Changelog = "https://github.com/zsimic/ripple-effect/blob/main/CHANGELOG.md"
 
 
 [tool.ruff]

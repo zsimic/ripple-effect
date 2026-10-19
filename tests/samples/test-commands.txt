@@ -1,0 +1,14 @@
+## Config
+config_path: tests/samples/test-commands.yml
+upstream: ~/github/runez
+proving-grounds: build/ripple-check
+1 downstream project:
+ - source-ref: ./foo
+   prepare: auto
+   test:
+     - pytest -x
+     - tox -re py
+     - tox -rve py
+     - tox --recreate
+     - my-wrapper tox -r -e py
+     - uvx --with tox-uv tox -re py

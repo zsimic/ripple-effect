@@ -1,0 +1,4 @@
+## Errors
+Invalid config tests/samples/duplicate-key.yml:
+- invalid YAML: found duplicate key 'upstream'
+  in "tests/samples/duplicate-key.yml", line 3, column 1

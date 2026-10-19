@@ -13,13 +13,16 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO, TYPE_CHECKING
 
 import runez
 import yaml
 from runez.pyenv import PypiStd
 
-# Valid config keys, per level (see SPEC.md)
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+# Valid config keys, per level (see "Config reference" in README.rst)
 TOP_LEVEL_KEYS = ("upstream", "proving-grounds", "source-prefix", "prepare", "test", "downstream-projects")
 GROUP_KEYS = ("description", "source-prefix", "prepare", "test", "sources")
 PROJECT_KEYS = ("source-ref", "prepare", "test")
@@ -79,9 +82,15 @@ def is_bare_name(source_ref: str) -> bool:
     return not is_local_path(source_ref) and not source_ref.startswith("git@") and "://" not in source_ref
 
 
-def logged_run(program, *args, logger=print, **kwargs):
-    """runez.run() for commands ran on the user's behalf: shown as they run (internal probes are shown with --verbose only)."""
-    return runez.run(program, *args, logger=logger, **kwargs)
+def quiet_run(program, *args, **kwargs):
+    """runez.run() for housekeeping and probes, shown with --verbose only. Programs stated by name are shown as such ('uv')."""
+    short_exe = program if isinstance(program, str) and os.path.basename(program) == program else None
+    return runez.run(program, *args, short_exe=short_exe, **kwargs)
+
+
+def logged_run(program, *args, **kwargs):
+    """quiet_run() for commands ran on the user's behalf: shown as they run."""
+    return quiet_run(program, *args, logger=print, **kwargs)
 
 
 def split_git_ref(source_ref: str) -> tuple[str, str | None]:
@@ -132,7 +141,7 @@ class VirtualEnv:
     @cached_property
     def is_healthy(self) -> bool:
         """True if the venv has a working Python (skip recreation when True)."""
-        return runez.run(self.bin_python, "--version", dryrun=False, fatal=False).succeeded
+        return quiet_run(self.bin_python, "--version", dryrun=False, fatal=False, logger=None).succeeded
 
     @property
     def uv_env(self) -> dict[str, str]:
@@ -151,6 +160,7 @@ class VirtualEnv:
             logging.debug("Reusing existing venv %s", runez.short(self.venv_folder))
             return
 
+        runez.ensure_folder(self.venv_folder, clean=True)  # Whatever was there (even a file) gets replaced
         if prepare_cmd == "auto":
             reqs = list(self.requirements_files())
             if reqs:
@@ -169,15 +179,15 @@ class VirtualEnv:
     def inject_upstream(self, upstream: UpstreamLocalized):
         """Inject upstream in editable mode, skip if already correctly installed."""
         if self.is_upstream_editable(upstream.local_folder):
-            print(f"  {upstream.package_name} already installed editable")
+            print(f"{upstream.package_name} already installed editable")
 
         else:
-            print(f"  injecting {upstream.package_name} (editable)")
+            print(f"injecting {upstream.package_name} (editable)")
             self.run_uv("pip", "install", "-e", str(upstream.local_folder))
 
     def is_upstream_editable(self, upstream_folder: Path) -> bool:
         """True if upstream (checked out in 'upstream_folder') is already installed as editable in this venv."""
-        r = runez.run("uv", "pip", "freeze", cwd=self.folder, env=self.uv_env, dryrun=False, fatal=False)  # Probe, shown with --verbose
+        r = quiet_run("uv", "pip", "freeze", cwd=self.folder, env=self.uv_env, dryrun=False, fatal=False)  # Probe, shown with --verbose
         if r.succeeded:
             # Exact match: a downstream cloned under the upstream folder has an editable line that starts with the upstream path
             needle = f"-e file://{upstream_folder}"
@@ -193,7 +203,7 @@ class VirtualEnv:
 
 
 class RunWith(ABC):
-    """Runs a test command from config, verifying that it really tests the upstream checkout (see "Test commands" in SPEC.md)."""
+    """Runs a test command from config, verifying that it really tests the upstream checkout (see docs/test-commands.md)."""
 
     needs_venv = False  # True if the command runs from the project's .venv/ (which then gets prepared, with upstream injected)
     needs_upstream_wheel = False  # True if the command needs an upstream wheel (built once per run, during prepare)
@@ -204,24 +214,20 @@ class RunWith(ABC):
         self.args = shlex.split(command)
 
     @staticmethod
-    def handler_for(args: list[str]) -> type[RunWith] | None:
-        """Handler for test command 'args', if there is one."""
+    def handler_for(args: list[str]) -> type[RunWith]:
+        """Handler for test command 'args' (RunWithNotSupported if none can run and verify it)."""
         if args and args[0] == "pytest":
             return RunWithPytest
 
         if RunWithTox.tox_args(args) is not None:
             return RunWithTox
 
-        return None
+        return RunWithNotSupported
 
     @staticmethod
     def for_command(project: DownstreamLocalized, command: str) -> RunWith:
         """Handler running test 'command' for 'project'."""
-        handler = RunWith.handler_for(shlex.split(command))
-        if handler is None:  # pragma: no cover, test commands are validated when config is loaded
-            raise ValueError(f"No handler for test command '{command}'")
-
-        return handler(project, command)
+        return RunWith.handler_for(shlex.split(command))(project, command)
 
     @staticmethod
     def problem_with(command: str) -> str | None:
@@ -232,24 +238,12 @@ class RunWith(ABC):
         except ValueError as e:
             return f"test command '{command}': {e}"
 
-        handler = RunWith.handler_for(args)
-        if handler:
-            problem = handler.args_problem(args)
-
-        elif any("pytest" in arg for arg in args):
-            problem = "state it as 'pytest ...', ripple-effect runs pytest from the project's .venv/"
-            if args[:2] == ["uv", "run"]:
-                problem += " (`uv run` would sync .venv/, replacing the injected upstream)"
-
-        else:
-            problem = "not supported yet, ripple-effect can't verify that it runs against the upstream checkout"
-            problem += " (supported: 'pytest ...', tox), contributions welcome"
-
+        problem = RunWith.handler_for(args).problem(args)
         return f"test command '{command}': {problem}" if problem else None
 
     @classmethod
-    def args_problem(cls, args: list[str]) -> str | None:
-        """Problem with the arguments of a test command this handler recognized, if any."""
+    def problem(cls, args: list[str]) -> str | None:
+        """Why this handler can't run (and verify) test command 'args', if it can't."""
         return None
 
     @abstractmethod
@@ -294,8 +288,8 @@ class RunWithTox(RunWith):
         return None
 
     @classmethod
-    def args_problem(cls, args: list[str]) -> str | None:
-        # Only simple forms are recognized (`tox -r ...`, `tox -re py`, `tox --recreate ...`), see "Test commands" in SPEC.md
+    def problem(cls, args: list[str]) -> str | None:
+        # Only simple forms are recognized (`tox -r ...`, `tox -re py`, `tox --recreate ...`), see docs/test-commands.md
         first_option = next((arg for arg in cls.tox_args(args) or [] if arg.startswith("-")), "")
         if not first_option.startswith(("-r", "--recreate")):
             return "tox's first option must be -r (or --recreate, e.g. 'tox -re py'), tox otherwise reuses existing envs"
@@ -308,7 +302,9 @@ class RunWithTox(RunWith):
         overrides = str(self.project.spec.upstream.overrides_file)
         existing = os.environ.get("UV_OVERRIDE")  # uv accepts a space-separated list of files, keep any existing ones
         env = dict(os.environ, UV_OVERRIDE=runez.joined(overrides, existing))
-        print(f"UV_OVERRIDE={shlex.quote(env['UV_OVERRIDE'])}")  # runez doesn't show env vars, allows to reproduce the run by hand
+        print(
+            f"UV_OVERRIDE={runez.short(shlex.quote(env['UV_OVERRIDE']))}"
+        )  # runez doesn't show env vars, allows to reproduce the run by hand
         before = self.tox_envs()
         r = logged_run(*self.args, env=env, fatal=False, passthrough=True)
         problems = [] if r.succeeded else [f"exit code {r.exit_code}"]
@@ -335,6 +331,17 @@ class RunWithTox(RunWith):
                 problems.append(f"tox env '{env.name}' has {upstream.package_name} {installed} instead of the upstream wheel")
 
         return problems
+
+
+class RunWithNotSupported(RunWith):
+    """A test command ripple-effect doesn't know how to verify: a config problem, left abstract as it never runs."""
+
+    @classmethod
+    def problem(cls, args: list[str]) -> str | None:
+        if any("pytest" in arg for arg in args):
+            return "state it as 'pytest ...', ripple-effect runs pytest from the project's .venv/"
+
+        return "not supported yet, ripple-effect can't verify that it runs against the upstream checkout, contributions welcome"
 
 
 class ProjectRef:
@@ -373,12 +380,8 @@ class ProjectRef:
 
     @cached_property
     def package_name(self) -> str:
-        """Package name from metadata, raises if not determinable."""
-        name = self.package_metadata.get("name")
-        if not name:
-            raise ValueError(f"Package name could not be determined for {self.source_ref!r}")
-
-        return str(name)
+        """Package name, from metadata (uv_metadata errors out when it can't determine it)."""
+        return str(self.package_metadata["name"])
 
     def _clone_or_update(self):
         """Clone or fetch-reset this project's git repo into proving_grounds."""
@@ -386,8 +389,8 @@ class ProjectRef:
         folder = self.local_folder
         if folder.is_dir():
             # Updating our own clone is housekeeping, shown with --verbose
-            runez.run("git", "fetch", cwd=folder)
-            runez.run("git", "reset", "--hard", "FETCH_HEAD", cwd=folder)
+            quiet_run("git", "fetch", cwd=folder)
+            quiet_run("git", "reset", "--hard", "FETCH_HEAD", cwd=folder)
 
         else:
             args = ["git", "clone", url]
@@ -410,7 +413,7 @@ class UpstreamLocalized(ProjectRef):
 
     @cached_property
     def wheel(self) -> Path:
-        """Wheel of the upstream checkout, built fresh on first use (once per run), see "tox" in SPEC.md."""
+        """Wheel of the upstream checkout, built fresh on first use (once per run), see docs/tox.md."""
         folder = self.spec.ripple_folder / "upstream"
         runez.delete(folder)
         logged_run("uv", "build", "--wheel", "-o", folder, self.local_folder)
@@ -470,7 +473,6 @@ class DownstreamLocalized(ProjectRef):
         """Run all test commands (even after one fails), return their outcomes."""
         outcomes = []
         with runez.CurrentFolder(self.local_folder):
-            # runez.run() uses `which()` and gets fooled when program to run is a relative path (bug in runez)
             for test_command in self.test_commands:
                 started = time.monotonic()
                 failure = test_command.run()
@@ -505,6 +507,7 @@ class RippleSpec:
 
     def __init__(self, config_path: Path):
         self.config_path = config_path
+        self.section_printed = False  # Set first: an invalid YAML aborts from within loaded_config() below
         self.problems: list[str] = []  # Reported all at once: `show` displays them, other commands abort with them
         data = self.checked_mapping(self.loaded_config(), TOP_LEVEL_KEYS, "top level", required=("upstream", "downstream-projects"))
         self.upstream = UpstreamLocalized(self, data.get("upstream"))
@@ -526,11 +529,27 @@ class RippleSpec:
         """Load a RippleSpec from a YAML config file."""
         return cls(Path(config_path).expanduser())
 
+    def print_section(self, title: str, level: int = 2, color: Callable[[str], str] = runez.blue, file: TextIO | None = None):
+        """Heading of an output section (see docs/pipeline.md#output), separated by a blank line from the previous section (if any)."""
+        if self.section_printed:
+            print(file=file)
+
+        self.section_printed = True
+        print(color(f"{'#' * level} {title}"), file=file)
+
+    def abort_with_errors(self, message: str):
+        """Exit with code 1, showing 'message' in an '## Errors' section on stderr."""
+        # runez colors when stdout is a tty: don't let color codes end up in a redirected stderr
+        color = runez.red if runez.SYS_INFO.terminal.is_stderr_tty else runez.plain
+        self.print_section("Errors", color=color, file=sys.stderr)
+        print(message, file=sys.stderr)
+        sys.exit(1)
+
     def abort_if_invalid(self):
-        """Abort if problems were found in config, listing them all."""
+        """Exit with code 1 if problems were found in config, listing them all in an '## Errors' section."""
         if self.problems:
-            listed = "".join(f"\n - {problem}" for problem in self.problems)
-            runez.abort(f"Invalid config {runez.short(self.config_path)}:{listed}")
+            listed = "".join(f"\n- {problem}" for problem in self.problems)
+            self.abort_with_errors(f"Invalid config {runez.short(self.config_path)}:{listed}")
 
     def loaded_config(self):
         """Contents of the YAML config file."""
@@ -659,29 +678,45 @@ class RippleSpec:
         """String representation for `show` command."""
         return runez.joined(self.representable_lines(), delimiter="\n")
 
-    def prepare(self):
-        """Prepare all downstream project environments."""
+    def clean_proving_grounds(self):
+        """Empty proving-grounds folder, refusing to if it holds anything that isn't ours."""
+        folder = self.proving_grounds_folder
+        precious = [self.config_path.resolve()] + [p.local_folder for p in (self.upstream, *self.downstream_projects) if p.is_local]
+        for path in precious:
+            if path.is_relative_to(folder):
+                self.abort_with_errors(f"Not cleaning proving-grounds {runez.short(folder)}: it holds {runez.short(path)}")
+
+        runez.ensure_folder(folder, clean=True, logger=print)
+
+    def prepare(self, clean: bool = False):
+        """Prepare all downstream project environments (from an empty proving-grounds folder if 'clean')."""
+        self.print_section("Preparation")
+        if clean:
+            self.clean_proving_grounds()
+
         self.upstream.prepare()
         if any(test_command.needs_upstream_wheel for project in self.downstream_projects for test_command in project.test_commands):
-            print(f"  uv overrides for tox runs: {runez.short(self.upstream.overrides_file)}")
+            print(f"uv overrides for tox runs: {runez.short(self.upstream.overrides_file)}")
 
         for downstream in self.downstream_projects:
-            print(f"\n{runez.bold(downstream.package_name)}: {runez.short(downstream.local_folder)}")
+            self.print_section(downstream.package_name, level=3)
+            print(f"folder: {runez.short(downstream.local_folder)}")
             downstream.prepare()
 
-    def run(self) -> None:
+    def run(self, clean: bool = False) -> None:
         """Prepare environments, run all test suites, report results."""
-        self.prepare()
+        self.prepare(clean=clean)
         results: dict[DownstreamLocalized, list[Outcome]] = {}
+        self.print_section("Testing")
         for downstream in self.downstream_projects:
-            print(f"\nTesting {runez.bold(downstream.package_name)}...")
+            self.print_section(downstream.package_name, level=3)
             results[downstream] = downstream.run_tests()
 
-        print(f"\n{'─' * 50}")
+        self.print_section("Outcome")
         fail_count = 0
         for group in self.groups:
             if group.description:
-                print(f"  {runez.bold(group.description)}:")
+                print(f"{runez.bold(group.description)}:")
 
             for downstream in group.projects:
                 outcomes = results[downstream]
@@ -689,12 +724,12 @@ class RippleSpec:
                 fail_count += len(failures)
                 elapsed = sum(outcome.elapsed for outcome in outcomes)
                 if len(outcomes) == 1:
-                    print(outcome_line(f"  {group.indent}{downstream.package_name}", outcomes[0].failure, elapsed))
+                    print(outcome_line(f"{group.indent}{downstream.package_name}", outcomes[0].failure, elapsed))
 
                 else:
-                    print(outcome_line(f"  {group.indent}{downstream.package_name}", "" if failures else None, elapsed))
+                    print(outcome_line(f"{group.indent}{downstream.package_name}", "" if failures else None, elapsed))
                     for outcome in outcomes:
-                        print(outcome_line(f"    {group.indent}{outcome.command}", outcome.failure, outcome.elapsed))
+                        print(outcome_line(f"  {group.indent}{outcome.command}", outcome.failure, outcome.elapsed))
 
         if fail_count:
             print(runez.red(f"{runez.plural(fail_count, 'test')} failed"))

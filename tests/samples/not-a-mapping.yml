@@ -1,0 +1,2 @@
+# The top level of a config must be a mapping
+- ./foo

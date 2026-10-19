@@ -1,0 +1,17 @@
+# Groups of projects sharing settings: ripple-effect -c tests/samples/groups.yml show
+upstream: ~/github/runez
+test: tox -re py                    # Default test command for all projects below
+downstream-projects:
+  - ./foo
+  - source-ref: ./bar
+    prepare: uv sync --all-groups   # Overrides the default, for this project only
+    test: pytest tests/ -x
+  - description: Repos with a typecheck target
+    test: tox -re py,typecheck      # Default for this group
+    sources:
+      - ./baz
+      - source-ref: ./qux
+        test:                       # Several test commands, run in order
+          - pytest
+          - tox -re typecheck
+  - sources: [./quux]               # A group without description is shown flat

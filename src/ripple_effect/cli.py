@@ -31,19 +31,25 @@ def main(ctx, debug: bool, config: str):
 @click.pass_obj
 def show(cfg: RippleSpec):
     """Show the resolved configuration, and any problems found in it."""
+    cfg.print_section("Config")
     print(cfg.represented())
     cfg.abort_if_invalid()
 
 
+clean_option = click.option("--clean", is_flag=True, help="Start from an empty proving-grounds folder (as on CI)")
+
+
 @main.command()
+@clean_option
 @click.pass_obj
-def prepare(cfg: RippleSpec):
+def prepare(cfg: RippleSpec, clean: bool):
     """Prepare downstream project environments (clone + build venvs)."""
-    cfg.prepare()
+    cfg.prepare(clean=clean)
 
 
 @main.command()
+@clean_option
 @click.pass_obj
-def run(cfg: RippleSpec):
+def run(cfg: RippleSpec, clean: bool):
     """Run the full pipeline: prepare → inject → test."""
-    cfg.run()
+    cfg.run(clean=clean)

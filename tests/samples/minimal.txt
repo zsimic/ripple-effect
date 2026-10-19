@@ -1,0 +1,11 @@
+## Config
+config_path: tests/samples/minimal.yml
+upstream: ~/github/runez
+proving-grounds: build/ripple-check
+2 downstream projects:
+ - source-ref: .
+   prepare: auto
+   test: pytest
+ - source-ref: https://github.com/foo/bar.git@main
+   prepare: auto
+   test: pytest

@@ -3,10 +3,35 @@ import re
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 import runez
 
 import ripple_effect.__main__
 from ripple_effect.model import VirtualEnv
+
+
+def extract_section(section: str, text: str) -> str | None:
+    """Content of first output section '## <section>' or '### <section>' in 'text' (up to the next heading of same or higher level)"""
+    heading = re.search(rf"^(#+) {re.escape(section)}\n", text, flags=re.MULTILINE)
+    if heading:
+        end = re.compile(rf"^#{{1,{len(heading.group(1))}}} ", flags=re.MULTILINE).search(text, heading.end())
+        return text[heading.end() : end.start() if end else None].strip("\n")
+
+    return None
+
+
+@pytest.mark.parametrize("name", sorted(path.stem for path in (Path(__file__).parent / "samples").glob("*.yml")))
+def test_samples(cli, name):
+    # `show` output of each sample config, regenerate with tests/regenerate-expected.sh
+    with runez.CurrentFolder(cli.project_folder):
+        cli.run("-c", f"tests/samples/{name}.yml", "show")
+        expected = Path(f"tests/samples/{name}.txt").read_text()
+
+    errors = extract_section("Errors", expected)
+    assert cli.succeeded == (errors is None)
+    output = cli.logged.contents()  # Both streams: errors are on stderr
+    assert extract_section("Config", output) == extract_section("Config", expected)
+    assert extract_section("Errors", output) == errors
 
 
 def test_trivial(cli):
@@ -28,18 +53,7 @@ def test_trivial(cli):
     cli.run("--config", "sample.yml", "show")
     assert cli.failed
     assert "upstream: -missing-" in cli.logged.stdout
-    assert "Invalid config sample.yml:\n - top level: missing 'upstream', 'downstream-projects'" in cli.logged
-
-
-def test_show(cli):
-    sample = runez.to_path(cli.tests_folder) / "samples/minimal.yml"
-    cli.run("--config", sample, "show")
-    assert cli.succeeded
-    assert "upstream: ~/github/runez" in cli.logged.stdout
-    assert "proving-grounds: build/ripple-check" in cli.logged.stdout
-    assert "2 downstream projects:" in cli.logged.stdout
-    assert "source-ref: ." in cli.logged.stdout
-    assert "source-ref: https://github.com/foo/bar.git@main" in cli.logged.stdout
+    assert "Invalid config sample.yml:\n- top level: missing 'upstream', 'downstream-projects'" in cli.logged
 
 
 def test_default_config(cli):
@@ -53,27 +67,14 @@ def test_default_config(cli):
 
     cli.run("--dryrun", "run")
     assert cli.succeeded
-    assert "Testing ripple-effect...\nWould run: build/verify-runez/ripple-effect/.venv/bin/pytest\n" in cli.logged
+    assert "Would run: build/verify-runez/ripple-effect/.venv/bin/pytest\n" in cli.logged
 
-
-def test_top_level_settings(cli):
-    runez.write(
-        "sample.yml",
-        """
-upstream: ~/github/runez
-test: tox -re py
-downstream-projects:
-  - ./foo
-  - source-ref: ./bar
-    prepare: uv sync
-    test: pytest tests/ -x
-""",
-        logger=None,
-    )
-    cli.run("-c", "sample.yml", "show")
+    runez.touch("build/verify-runez/leftover/foo", logger=None)
+    cli.run("--dryrun", "run", "--clean")
     assert cli.succeeded
-    assert " - source-ref: ./foo\n   prepare: auto\n   test: tox -re py\n" in cli.logged.stdout
-    assert " - source-ref: ./bar\n   prepare: uv sync\n   test: pytest tests/ -x" in cli.logged.stdout
+    prep = extract_section("Preparation", cli.logged.stdout.contents())
+    assert prep
+    assert prep.startswith("Would clean 1 file from build/verify-runez\n")
 
 
 def test_groups(cli):
@@ -94,26 +95,6 @@ downstream-projects:
 """,
         logger=None,
     )
-    cli.run("-c", "sample.yml", "show")
-    assert cli.succeeded
-    expected = """
-4 downstream projects:
- - source-ref: ./foo
-   prepare: auto
-   test: tox -r -e py
- - Repos with a typecheck target:
-   - source-ref: ./bar
-     prepare: auto
-     test: tox -r -e py,typecheck
-   - source-ref: ./baz
-     prepare: uv sync --all-groups
-     test: tox -r -e py,typecheck
- - source-ref: ./qux
-   prepare: auto
-   test: tox -r -e py
-"""
-    assert expected in cli.logged.stdout
-
     # Summary report nests grouped projects under their description
     for name in ("upstream", "foo", "bar", "baz", "qux"):
         runez.ensure_folder(name, logger=None)
@@ -122,104 +103,24 @@ downstream-projects:
         cli.run("--dryrun", "-c", "sample.yml", "run")
 
     assert cli.succeeded
+    testing = extract_section("Testing", cli.logged.stdout.contents())
+    assert testing is not None
     for name in ("bar", "baz"):
-        assert re.search(rf"Testing {name}...\nUV_OVERRIDE=\S+\nWould run: \S*tox -r -e py,typecheck\n", cli.logged.stdout.contents())
-    summary = cli.logged.stdout.contents().partition("─" * 50)[2]
-    lines = [line[2:].partition(": ")[0] for line in summary.strip("\n").splitlines()]
+        tested = extract_section(name, testing)
+        assert tested
+        assert re.fullmatch(r"UV_OVERRIDE=\S+\nWould run: tox -r -e py,typecheck", tested)
+    outcome = extract_section("Outcome", cli.logged.stdout.contents())
+    assert outcome is not None
+    lines = [line.partition(": ")[0] for line in outcome.splitlines()]
     assert lines == ["foo", "Repos with a typecheck target:", "  bar", "  baz", "qux"]
 
-
-def test_invalid_config(cli):
-    def check(config: str, expected: str, upstream="upstream: .\n"):
-        runez.write("bad.yml", upstream + config, logger=None)
-        cli.run("-c", "bad.yml", "show")
-        assert cli.failed
-        assert "Invalid config bad.yml:" in cli.logged
-        assert f"\n - {expected}" in cli.logged
-
-    check("- ./foo", "top level: expected a mapping", upstream="")
-    check("downstream-projects: [./foo]", "top level: missing 'upstream'", upstream="")
-    check("test: a", "top level: missing 'downstream-projects'")
-    check("test: a\ntest: b", "invalid YAML: found duplicate key 'test'\n  in \"bad.yml\", line 3")
-    check("test: [a", "invalid YAML")
-    check("defaults:\n  test: a", "top level: unknown key 'defaults', expected one of: upstream, proving-grounds,")
-    check("test:", "top level: 'test' must be a non-empty string")
-    check("upstream: [a]", "top level: 'upstream' must be a non-empty string", upstream="")
-    check("downstream-projects: ./foo", "top level: 'downstream-projects' must be a non-empty list")
-    check("downstream-projects: []", "top level: 'downstream-projects' must be a non-empty list")
-    check("downstream-projects:\n  -", "downstream-projects[0]: expected a string or a mapping")
-    check("downstream-projects:\n  - test: a", "downstream-projects[0]: needs either 'source-ref' (a project) or 'sources' (a group)")
-    check(
-        "downstream-projects:\n  - description: a\n    repos: [./foo]",
-        "downstream-projects[0]: unknown key 'repos', expected one of: description, source-prefix, prepare, test, sources",
-    )
-    check("downstream-projects:\n  - source-ref: ./foo\n    sources: [./bar]", "downstream-projects[0]: unknown key 'sources'")
-    check("downstream-projects:\n  - source-ref: ./foo\n    description: a", "downstream-projects[0]: unknown key 'description'")
-    check("downstream-projects:\n  - sources: [{sources: [./foo]}]", "downstream-projects[0].sources[0]: unknown key 'sources'")
-    check("downstream-projects:\n  - sources: [{test: a}]", "downstream-projects[0].sources[0]: missing 'source-ref'")
-    check("downstream-projects:\n  - ./foo\n  - sources: [./bar, ./foo]", "'./foo' is listed more than once in downstream-projects")
-
-    # source-prefix
-    check(
-        "downstream-projects: [./foo, lib-a]",
-        "downstream-projects[1]: 'lib-a' is neither a URL nor a local path, and no 'source-prefix' is in effect",
-    )
-    check("source-prefix: corp/\ndownstream-projects: [./foo]", "top level: 'source-prefix' must be a URL or a local path, got 'corp/'")
-    check(
-        "downstream-projects:\n  - source-prefix: corp/\n    sources: [lib-a]",
-        "downstream-projects[0]: 'source-prefix' must be a URL or a local path, got 'corp/'",
-    )
-    check(
-        "downstream-projects:\n  - source-ref: lib-a\n    source-prefix: ~/dev/",
-        "downstream-projects[0]: unknown key 'source-prefix', expected one of: source-ref, prepare, test",
-    )
-    check("source-prefix: ~/dev/\ndownstream-projects: [foo, ~/dev/foo]", "'~/dev/foo' is listed more than once in downstream-projects")
-
-    # Test commands
-    check("test: []\ndownstream-projects: [./foo]", "top level: 'test' must be a non-empty string, or a non-empty list of them")
-    check("test: [pytest, 1]\ndownstream-projects: [./foo]", "top level: 'test' must be a non-empty string, or a non-empty list of them")
-    check("test: pytest 'a\ndownstream-projects: [./foo]", "top level: test command 'pytest 'a': No closing quotation")
-    unsupported = "not supported yet, ripple-effect can't verify that it runs against the upstream checkout"
-    check("test: hatch run test\ndownstream-projects: [./foo]", f"top level: test command 'hatch run test': {unsupported}")
-    restated = "state it as 'pytest ...', ripple-effect runs pytest from the project's .venv/"
-    check("test: .venv/bin/pytest\ndownstream-projects: [./foo]", f"top level: test command '.venv/bin/pytest': {restated}\n")
-    check("test: python -mpytest\ndownstream-projects: [./foo]", f"top level: test command 'python -mpytest': {restated}\n")
-    check(
-        "test: uv run pytest\ndownstream-projects: [./foo]",
-        f"top level: test command 'uv run pytest': {restated} (`uv run` would sync .venv/, replacing the injected upstream)",
-    )
-    no_recreate = "tox's first option must be -r (or --recreate, e.g. 'tox -re py'), tox otherwise reuses existing envs"
-    for command in ("tox", "tox -e py", "tox -er py", "tox -vre py", "tox -v -r -e py", "uvx tox -e py", "tox -e py -- -r"):
-        check(f"test: {command}\ndownstream-projects: [./foo]", f"top level: test command '{command}': {no_recreate}")
-
-    # All problems in a list of test commands are reported
-    config = "downstream-projects:\n  - source-ref: ./foo\n    test: [hatch test, tox -e py]"
-    check(config, "downstream-projects[0]: test command 'hatch test'")
-    check(config, "downstream-projects[0]: test command 'tox -e py'")
-
-
-def test_test_commands(cli):
-    runez.write(
-        "sample.yml",
-        """
-upstream: ./upstream
-test: [pytest -x, tox -re py, tox -rve py, tox --recreate, newt tox -r -e py, uvx --with tox-uv tox -re py]
-downstream-projects: [./foo]
-""",
-        logger=None,
-    )
-    cli.run("-c", "sample.yml", "show")
-    assert cli.succeeded
-    expected = """
-   test:
-     - pytest -x
-     - tox -re py
-     - tox -rve py
-     - tox --recreate
-     - newt tox -r -e py
-     - uvx --with tox-uv tox -re py
-"""
-    assert expected in cli.logged.stdout
+    # --clean refuses to wipe a proving-grounds holding anything that isn't ripple-effect's own
+    runez.write("sample.yml", "upstream: ./upstream\nproving-grounds: .\ndownstream-projects: [./foo]", logger=None)
+    cli.run("--dryrun", "-c", "sample.yml", "run", "--clean")
+    assert cli.failed
+    errors = extract_section("Errors", cli.logged.contents())
+    assert errors
+    assert re.fullmatch(r"Not cleaning proving-grounds \S+: it holds sample.yml", errors)
 
 
 def fake_program(path, script="exit 0"):
@@ -229,23 +130,27 @@ def fake_program(path, script="exit 0"):
 
 
 def test_run_outcomes(cli):
-    for name in ("ok", "not-injected"):
-        fake_program(f"{name}/.venv/bin/pytest")
+    # Fake prepare: "installs" in .venv/ the fake pytest found in the project's 'pytest-script' (if any)
+    fake_program("fake-prepare", "[ ! -f pytest-script ] || (mkdir -p .venv/bin && cp pytest-script .venv/bin/pytest)")
+    for name in ("ok", "not-injected", "redirected"):
+        fake_program(f"{name}/pytest-script")
 
-    fake_program("failing/.venv/bin/pytest", "exit 3")
-    fake_program("both/.venv/bin/pytest", '[ "$1" != "--fail" ] || exit 4')
-    runez.ensure_folder("no-pytest/.venv/bin", logger=None)
+    fake_program("failing/pytest-script", "exit 3")
+    fake_program("both/pytest-script", '[ "$1" != "--fail" ] || exit 4')
+    runez.ensure_folder("no-pytest", logger=None)
+    runez.write("redirected/.venv", ".tox/py\n", logger=None)  # A file (PEP 832 redirect, as written by tox): gets replaced
     runez.ensure_folder("upstream", logger=None)
     runez.write(
         "sample.yml",
-        """
+        f"""
 upstream: ./upstream
-prepare: "true"
+prepare: {os.getcwd()}/fake-prepare
 downstream-projects:
   - ./ok
   - ./failing
   - ./no-pytest
   - ./not-injected
+  - ./redirected
   - source-ref: ./both
     test: [pytest -x, pytest --fail]
 """,
@@ -260,26 +165,94 @@ downstream-projects:
 
     assert cli.failed
     assert "4 tests failed" in cli.logged.stdout
-    assert "Testing ok...\nRunning: ok/.venv/bin/pytest\n" in cli.logged.stdout
-    assert "Testing both...\nRunning: both/.venv/bin/pytest -x\n" in cli.logged.stdout
-    summary = cli.logged.stdout.contents().partition("─" * 50)[2]
-    expected = """
-  ok: PASSED
-  failing: FAILED: exit code 3
-  no-pytest: FAILED: pytest is not installed in .venv/
-  not-injected: FAILED: upstream is not installed editable in .venv/
-  both: FAILED
-    pytest -x: PASSED
-    pytest --fail: FAILED: exit code 4
-"""
-    assert re.sub(r" \(\d+\.\ds\)", "", summary).startswith(expected)
+    assert os.path.isdir("redirected/.venv")
+    testing = extract_section("Testing", cli.logged.stdout.contents())
+    assert testing is not None
+    assert extract_section("ok", testing) == "Running: ok/.venv/bin/pytest"
+    assert extract_section("both", testing) == "Running: both/.venv/bin/pytest -x\nRunning: both/.venv/bin/pytest --fail"
+    outcome = extract_section("Outcome", cli.logged.stdout.contents())
+    assert outcome is not None
+    expected = """\
+ok: PASSED
+failing: FAILED: exit code 3
+no-pytest: FAILED: pytest is not installed in .venv/
+not-injected: FAILED: upstream is not installed editable in .venv/
+redirected: PASSED
+both: FAILED
+  pytest -x: PASSED
+  pytest --fail: FAILED: exit code 4
+4 tests failed"""
+    assert re.sub(r" \(\d+\.\ds\)", "", outcome) == expected
+
+
+def tiny_project(folder):
+    """A real (tiny) python project, named after 'folder': builds offline in ~20ms"""
+    name = Path(folder).name
+    pyproject = f'[build-system]\nrequires = ["uv_build"]\nbuild-backend = "uv_build"\n\n[project]\nname = "{name}"\nversion = "1.0"\n'
+    runez.write(f"{folder}/pyproject.toml", pyproject, logger=None)
+    runez.touch(f"{folder}/src/{name}/__init__.py", logger=None)
+
+
+def editable_venv(folder, *editables):
+    """A real .venv/ in 'folder', with 'editables' installed in editable mode (offline, ~70ms)"""
+    runez.run("uv", "venv", "-q", "--offline", f"{folder}/.venv", logger=None)
+    for editable in editables:
+        runez.run("uv", "pip", "install", "-q", "--offline", "-p", f"{folder}/.venv", "-e", editable, logger=None)
+
+
+def test_dryrun_existing_setups(cli):
+    # What's already in place is checked for real (even with --dryrun): healthy venvs are reused, upstream injected only if needed
+    tiny_project("tinyup")
+    editable_venv("ready", "tinyup")
+    tiny_project("tinyup/nested")  # Downstream under the upstream folder: its own editable path starts with upstream's
+    editable_venv("tinyup/nested", "tinyup/nested")
+    runez.write("old-school/requirements.txt", "foo\n", logger=None)
+    runez.ensure_folder("build/ripple-check/cloned", logger=None)  # Cloned by a previous run
+    runez.write(
+        "sample.yml",
+        "upstream: ./tinyup\ndownstream-projects: [./ready, ./tinyup/nested, ./old-school, https://github.com/example/cloned.git]",
+        logger=None,
+    )
+    with patch("uv_metadata.get_metadata_from_pip_spec", side_effect=lambda pip_spec: {"name": Path(pip_spec).stem}):
+        cli.run("--dryrun", "-c", "sample.yml", "run")
+
+    assert cli.succeeded
+    prepared = extract_section("Preparation", cli.logged.stdout.contents())
+    assert prepared is not None
+    expected = """\
+upstream: tinyup @ tinyup
+
+### ready
+folder: ready
+tinyup already installed editable
+
+### nested
+folder: tinyup/nested
+injecting tinyup (editable)
+Would run: uv pip install -e tinyup
+
+### old-school
+folder: old-school
+Would create old-school/.venv
+Would run: uv venv --clear
+Would run: uv pip install -r old-school/requirements.txt
+Would run: uv pip install -e .
+injecting tinyup (editable)
+Would run: uv pip install -e tinyup
+
+### cloned
+folder: build/ripple-check/cloned
+Would run: git fetch
+Would run: git reset --hard FETCH_HEAD
+Would create build/ripple-check/cloned/.venv
+Would run: uv sync
+injecting tinyup (editable)
+Would run: uv pip install -e tinyup"""
+    assert prepared == expected
 
 
 def test_tox_runs(cli, monkeypatch):
-    # A real (tiny) upstream, ripple-effect builds its wheel
-    pyproject = '[build-system]\nrequires = ["uv_build"]\nbuild-backend = "uv_build"\n\n[project]\nname = "tinyup"\nversion = "1.0"\n'
-    runez.write("tinyup/pyproject.toml", pyproject, logger=None)
-    runez.touch("tinyup/src/tinyup/__init__.py", logger=None)
+    tiny_project("tinyup")  # Real upstream, ripple-effect builds its wheel
 
     # Fake tox runs, creating a .tox/py env with the upstream installed: from the wheel stated in UV_OVERRIDE (like tox-uv does),
     # or from an index (ignoring UV_OVERRIDE). A .tox/style env without upstream, and tox's internal .tox/.pkg are ignored
@@ -310,85 +283,26 @@ touch .tox/py/pyvenv.cfg .tox/style/pyvenv.cfg .tox/.pkg/pyvenv.cfg
     wheel = Path("build/ripple-check/.ripple/upstream/tinyup-1.0-py3-none-any.whl").absolute()
     assert wheel.exists()
     assert list(runez.readlines("build/ripple-check/.ripple/overrides.txt")) == [f"tinyup @ file://{wheel}"]
-    overrides = rf"'\S+/\.ripple/overrides\.txt {re.escape(cwd)}/user-overrides.txt'"  # Ours first, existing ones kept
-    assert re.search(rf"Testing uv-tox...\nUV_OVERRIDE={overrides}\nRunning: fake/uv-tox/tox -re py\n", cli.logged.stdout.contents())
-    summary = cli.logged.stdout.contents().partition("─" * 50)[2]
-    expected = """
-  uv-tox: PASSED
-  pip-tox: FAILED: tox env 'py' has tinyup 1.0 instead of the upstream wheel
-  no-env: FAILED: couldn't verify that tox used the upstream checkout: no recreated env found in .tox/
-  failing: FAILED: exit code 2, tox env 'py' has tinyup 1.0 instead of the upstream wheel
-"""
-    assert re.sub(r" \(\d+\.\ds\)", "", summary).startswith(expected)
+    overrides = "'build/ripple-check/.ripple/overrides.txt user-overrides.txt'"  # Ours first, existing ones kept (paths shortened)
+    assert f"UV_OVERRIDE={overrides}\nRunning: fake/uv-tox/tox -re py\n" in cli.logged.stdout
+    outcome = extract_section("Outcome", cli.logged.stdout.contents())
+    assert outcome is not None
+    expected = """\
+uv-tox: PASSED
+pip-tox: FAILED: tox env 'py' has tinyup 1.0 instead of the upstream wheel
+no-env: FAILED: couldn't verify that tox used the upstream checkout: no recreated env found in .tox/
+failing: FAILED: exit code 2, tox env 'py' has tinyup 1.0 instead of the upstream wheel
+3 tests failed"""
+    assert re.sub(r" \(\d+\.\ds\)", "", outcome) == expected
 
 
-def test_problems_reported_together(cli):
-    runez.write(
-        "bad.yml",
-        """
-proving-grounds: ./build
-downstream-projects:
-  - ./foo
-  - lib-a
-  - source-ref: ./bar
-    tset: tox -r -e py
-  - test: tox -r -e py
-""",
-        logger=None,
-    )
-    expected = """Invalid config bad.yml:
- - top level: missing 'upstream'
- - downstream-projects[1]: 'lib-a' is neither a URL nor a local path, and no 'source-prefix' is in effect
- - downstream-projects[2]: unknown key 'tset', expected one of: source-ref, prepare, test
- - downstream-projects[3]: needs either 'source-ref' (a project) or 'sources' (a group)
-"""
+def test_run_invalid_config(cli):
+    # Commands other than `show` abort with all problems (same as shown by `show`), before doing anything
+    with runez.CurrentFolder(cli.project_folder):
+        cli.run("--dryrun", "-c", "tests/samples/bad-config.yml", "run")
+        expected = Path("tests/samples/bad-config.txt").read_text()
 
-    # `show` displays the config (missing values in red), then all problems found
-    cli.run("-c", "bad.yml", "show")
     assert cli.failed
-    assert "upstream: -missing-\nproving-grounds: ./build\n3 downstream projects:\n - source-ref: ./foo\n" in cli.logged.stdout
-    assert " - source-ref: lib-a\n" in cli.logged.stdout
-    assert expected in cli.logged
-
-    # Other commands abort with the same problems, before doing anything
-    cli.run("--dryrun", "-c", "bad.yml", "run")
-    assert cli.failed
-    assert "source-ref:" not in cli.logged
-    assert "Would run" not in cli.logged
-    assert expected in cli.logged
-
-
-def test_source_prefix(cli):
-    runez.write(
-        "sample.yml",
-        """
-upstream: ~/github/runez
-source-prefix: https://git.example.com/corp/
-downstream-projects:
-  - lib-a
-  - lib-b@main
-  - git@github.com:foo/bar.git
-  - https://github.com/foo/baz.git
-  - ./local
-  - source-ref: lib-c
-    test: tox -r -e py
-  - description: Local checkouts
-    source-prefix: ~/dev/
-    sources: [tool-a, {source-ref: tool-b}, /opt/tool-c]
-""",
-        logger=None,
-    )
-    cli.run("-c", "sample.yml", "show")
-    assert cli.succeeded
-    refs = [line.strip() for line in cli.logged.stdout.contents().splitlines() if "source-ref:" in line]
-    assert refs == [
-        "- source-ref: https://git.example.com/corp/lib-a",
-        "- source-ref: https://git.example.com/corp/lib-b@main",
-        "- source-ref: git@github.com:foo/bar.git",
-        "- source-ref: https://github.com/foo/baz.git",
-        "- source-ref: ./local",
-        "- source-ref: https://git.example.com/corp/lib-c",
-        "- source-ref: ~/dev/tool-a",
-        "- source-ref: ~/dev/tool-b",
-        "- source-ref: /opt/tool-c",
-    ]
+    # FUTURE-FIX: assert not cli.logged.stdout.contents() when runez 5.11+ is released
+    assert cli.logged.contents().startswith("## Errors\n")
+    assert extract_section("Errors", cli.logged.contents()) == extract_section("Errors", expected)

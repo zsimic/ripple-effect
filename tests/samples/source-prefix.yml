@@ -1,0 +1,13 @@
+# Bare names completed by 'source-prefix': ripple-effect -c tests/samples/source-prefix.yml show
+upstream: ~/github/runez
+source-prefix: https://git.example.com/corp/
+downstream-projects:
+  - lib-a                           # Bare name: gets the prefix
+  - lib-b@main                      # Plain concatenation, branch included
+  - git@github.com:foo/bar.git      # URLs and local paths are used as-is
+  - https://github.com/foo/baz.git
+  - ./local
+  - source-ref: lib-c
+  - description: Local checkouts
+    source-prefix: ~/dev/           # A group's prefix wins, and can be a local folder
+    sources: [tool-a, /opt/tool-b]

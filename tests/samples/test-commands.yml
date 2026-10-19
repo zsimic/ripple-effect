@@ -1,0 +1,10 @@
+# Accepted forms of test commands: ripple-effect -c tests/samples/test-commands.yml show
+upstream: ~/github/runez
+test:
+  - pytest -x                       # Runs .venv/bin/pytest
+  - tox -re py                      # tox's first option must start with -r
+  - tox -rve py
+  - tox --recreate
+  - my-wrapper tox -r -e py         # A `tox` word anywhere: wrappers work
+  - uvx --with tox-uv tox -re py
+downstream-projects: [./foo]

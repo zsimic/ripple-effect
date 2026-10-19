@@ -1,0 +1,71 @@
+## Config
+config_path: tests/samples/bad-config.yml
+upstream: -missing-
+proving-grounds: build/ripple-check
+12 downstream projects:
+ - source-ref: ./foo
+   prepare: auto
+   test: pytest
+ - source-ref: -missing-
+   prepare: auto
+   test: pytest
+ - Typo:
+ - source-ref: ./bar
+   prepare: auto
+   test: pytest
+ - source-ref: -missing-
+   prepare: auto
+   test: pytest
+ - source-ref: -missing-
+   prepare: auto
+   test: pytest
+ - source-ref: ./foo
+   prepare: auto
+   test: pytest
+ - source-ref: lib-a
+   prepare: auto
+   test: pytest
+ - source-ref: ~/dev/foo
+   prepare: auto
+   test: pytest
+ - source-ref: ~/dev/foo
+   prepare: auto
+   test: pytest
+ - Test commands:
+   - source-ref: ./not-pytest
+     prepare: auto
+     test: pytest
+   - source-ref: ./not-recreating
+     prepare: auto
+     test: pytest
+   - source-ref: ./not-strings
+     prepare: auto
+     test: pytest
+
+## Errors
+Invalid config tests/samples/bad-config.yml:
+- top level: 'upstream' must be a non-empty string
+- top level: unknown key 'defaults', expected one of: upstream, proving-grounds, source-prefix, prepare, test, downstream-projects
+- top level: 'source-prefix' must be a URL or a local path, got 'corp/'
+- downstream-projects[1]: expected a string or a mapping
+- downstream-projects[2]: needs either 'source-ref' (a project) or 'sources' (a group)
+- downstream-projects[3]: unknown key 'repos', expected one of: description, source-prefix, prepare, test, sources
+- downstream-projects[3]: needs either 'source-ref' (a project) or 'sources' (a group)
+- downstream-projects[4]: unknown key 'sources', expected one of: source-ref, prepare, test
+- downstream-projects[5].sources[0]: unknown key 'sources', expected one of: source-ref, prepare, test
+- downstream-projects[5].sources[0]: missing 'source-ref'
+- downstream-projects[5].sources[1]: missing 'source-ref'
+- downstream-projects[6]: 'sources' must be a non-empty list
+- downstream-projects[8]: 'lib-a' is neither a URL nor a local path, and no 'source-prefix' is in effect
+- downstream-projects[10].sources[0]: test command 'hatch run test': not supported yet, ripple-effect can't verify that it runs against the upstream checkout, contributions welcome
+- downstream-projects[10].sources[0]: test command '.venv/bin/pytest': state it as 'pytest ...', ripple-effect runs pytest from the project's .venv/
+- downstream-projects[10].sources[0]: test command 'uv run pytest': state it as 'pytest ...', ripple-effect runs pytest from the project's .venv/
+- downstream-projects[10].sources[0]: test command 'pytest 'a': No closing quotation
+- downstream-projects[10].sources[1]: test command 'tox': tox's first option must be -r (or --recreate, e.g. 'tox -re py'), tox otherwise reuses existing envs
+- downstream-projects[10].sources[1]: test command 'tox -e py': tox's first option must be -r (or --recreate, e.g. 'tox -re py'), tox otherwise reuses existing envs
+- downstream-projects[10].sources[1]: test command 'tox -vre py': tox's first option must be -r (or --recreate, e.g. 'tox -re py'), tox otherwise reuses existing envs
+- downstream-projects[10].sources[1]: test command 'uvx tox -e py': tox's first option must be -r (or --recreate, e.g. 'tox -re py'), tox otherwise reuses existing envs
+- downstream-projects[10].sources[1]: test command 'tox -e py -- -r': tox's first option must be -r (or --recreate, e.g. 'tox -re py'), tox otherwise reuses existing envs
+- downstream-projects[10].sources[2]: 'test' must be a non-empty string, or a non-empty list of them
+- './foo' is listed more than once in downstream-projects
+- '~/dev/foo' is listed more than once in downstream-projects
