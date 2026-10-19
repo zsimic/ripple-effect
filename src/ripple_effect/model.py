@@ -28,6 +28,7 @@ GROUP_KEYS = ("description", "source-prefix", "prepare", "test", "sources")
 PROJECT_KEYS = ("source-ref", "prepare", "test")
 LIST_KEYS = ("downstream-projects", "sources")  # Keys with a list value, 'test' is a string or a list, others are strings
 DEFAULT_PROVING_GROUNDS = "build/ripple-check"  # Relative to the config file's folder, 'build/' is typically git-ignored
+RUN_LOG = "last-run.log"  # Full output of last `run`, in proving-grounds
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
@@ -101,6 +102,91 @@ def split_git_ref(source_ref: str) -> tuple[str, str | None]:
             return url, ref
 
     return source_ref, None
+
+
+class OutputRecorder:
+    """Records output of `run` (stdout, stderr, passed-through output of commands, logs) uncolored, see docs/pipeline.md#output."""
+
+    def __init__(self) -> None:
+        self.enabled = False
+        self.pending: list[str] = []  # Output recorded before the log file gets opened by start()
+        self.fh: TextIO | None = None
+        self.tees: dict[str, TeeStream] = {}  # Replacing sys.stdout and sys.stderr, while enabled
+        self.log_handler = logging.StreamHandler(self)  # runez's console handler holds on to its own stream, record logs separately
+
+    def write(self, text: str):
+        """Record complete lines 'text'. Progress bars redraw their line after a '\r' or an 'erase line' code: keep what was drawn last."""
+        text = runez.uncolored(text.replace("\x1b[2K", "\r"))  # Passed-through output has '\r\n' (or even '\r\r\n') line ends
+        text = "\n".join(line.rstrip("\r").rpartition("\r")[2] for line in text.split("\n"))
+        if self.fh is None:
+            self.pending.append(text)
+
+        else:
+            self.fh.write(text)
+
+    def flush(self):
+        if self.fh is not None:
+            self.fh.flush()
+
+    def enable(self):
+        """Start recording sys.stdout, sys.stderr and logs, held in 'pending' until start()."""
+        self.enabled = True
+        self.tees = {name: TeeStream(getattr(sys, name), self) for name in ("stdout", "stderr")}
+        for name, tee in self.tees.items():
+            setattr(sys, name, tee)  # Like runez.CaptureOutput: a TeeStream is not a TextIO
+
+        console = runez.log.console_handler
+        if console:  # Record logs as they're shown on console
+            self.log_handler.setFormatter(console.formatter)
+            self.log_handler.setLevel(console.level)
+            logging.root.addHandler(self.log_handler)
+
+    def start(self, path: Path):
+        """Start writing to 'path' what's recorded, if enabled (not in dryrun mode). Opened late: `--clean` would delete it."""
+        if self.enabled and not runez.DRYRUN:
+            print(f"full output recorded in: {runez.short(path)}")
+            runez.ensure_folder(path.parent, logger=None)
+            self.fh = path.open("w")
+            self.fh.writelines(self.pending)
+            self.pending = []
+
+    def stop(self):
+        """Stop recording, close log file."""
+        for name, tee in self.tees.items():
+            setattr(sys, name, tee.stream)
+            self.write(tee.partial)  # Last line, in case it wasn't complete
+
+        self.tees = {}
+        logging.root.removeHandler(self.log_handler)
+        if self.fh is not None:
+            self.fh.close()
+            self.fh = None
+
+        self.enabled = False
+        self.pending = []
+
+
+class TeeStream:
+    """Stream writing to 'stream', and to 'recorder' (line by line: a progress bar redraws its line, possibly across writes)."""
+
+    def __init__(self, stream: TextIO, recorder: OutputRecorder):
+        self.stream = stream
+        self.recorder = recorder
+        self.partial = ""  # Current line, recorded once complete
+
+    def __getattr__(self, name: str):
+        return getattr(self.stream, name)  # isatty(), encoding etc. are those of the wrapped stream
+
+    def write(self, text: str) -> int:
+        complete, newline, self.partial = (self.partial + text).rpartition("\n")
+        if newline:
+            self.recorder.write(complete + newline)
+
+        return self.stream.write(text)
+
+    def flush(self):
+        self.recorder.flush()
+        self.stream.flush()
 
 
 @dataclass(frozen=True)
@@ -509,6 +595,7 @@ class RippleSpec:
         self.config_path = config_path
         self.section_printed = False  # Set first: an invalid YAML aborts from within loaded_config() below
         self.problems: list[str] = []  # Reported all at once: `show` displays them, other commands abort with them
+        self.recorder = OutputRecorder()  # Records output of `run` to RUN_LOG
         data = self.checked_mapping(self.loaded_config(), TOP_LEVEL_KEYS, "top level", required=("upstream", "downstream-projects"))
         self.upstream = UpstreamLocalized(self, data.get("upstream"))
         self.proving_grounds = data.get("proving-grounds") or DEFAULT_PROVING_GROUNDS
@@ -694,6 +781,8 @@ class RippleSpec:
         if clean:
             self.clean_proving_grounds()
 
+        self.recorder.start(self.proving_grounds_folder / RUN_LOG)
+
         self.upstream.prepare()
         if any(test_command.needs_upstream_wheel for project in self.downstream_projects for test_command in project.test_commands):
             print(f"uv overrides for tox runs: {runez.short(self.upstream.overrides_file)}")
@@ -704,6 +793,15 @@ class RippleSpec:
             downstream.prepare()
 
     def run(self, clean: bool = False) -> None:
+        """Prepare environments, run all test suites, report results (recorded to RUN_LOG, except in dryrun mode)."""
+        self.recorder.enable()
+        try:
+            self.run_and_report(clean)
+
+        finally:
+            self.recorder.stop()
+
+    def run_and_report(self, clean: bool):
         """Prepare environments, run all test suites, report results."""
         self.prepare(clean=clean)
         results: dict[DownstreamLocalized, list[Outcome]] = {}

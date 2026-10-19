@@ -61,6 +61,7 @@ ripple-effect will:
 4. Run each project's test commands: ``pytest ...`` from that venv, ``tox -r ...`` with a wheel of
    your library forced in its envs (via ``UV_OVERRIDE``), verifying they really used your library
 5. Report pass / fail per project with timing
+6. Record the full output of the run in ``<proving-grounds>/last-run.log``
 
 Real example — this repo's own ``ripple-effect.yml``:
 
