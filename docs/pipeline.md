@@ -36,6 +36,12 @@ Output is split into `## <Section>` headings, so CI logs and agents can pick out
 `### <package name>` sub-section per project. The headings are the interface, keep them stable;
 what's inside a section is free to change.
 
+`run` also records its full output in `<proving-grounds>/last-run.log` (not in dryrun mode): stdout
+and stderr in the order they were written, including the passed-through output of test commands
+and log chatter, uncolored. `OutputRecorder` tees `sys.stdout`/`sys.stderr` (and adds a log handler,
+runez's console handler holds on to its own stream). The file gets opened only after `--clean`
+emptied proving-grounds, what was written before is held until then.
+
 The rule: **`logged_run()`** for commands run on the user's behalf (clone, prepare, inject, wheel
 build, tests), shown as `Running: ...`; **`quiet_run()`** for housekeeping and probes
 (`git fetch`/`reset`, `uv pip freeze`), shown only with `--verbose`. Both show a program stated by

@@ -1,3 +1,4 @@
+import io
 import os
 import re
 from pathlib import Path
@@ -7,7 +8,7 @@ import pytest
 import runez
 
 import ripple_effect.__main__
-from ripple_effect.model import VirtualEnv
+from ripple_effect.model import OutputRecorder, TeeStream, VirtualEnv
 
 
 def extract_section(section: str, text: str) -> str | None:
@@ -68,6 +69,7 @@ def test_default_config(cli):
     cli.run("--dryrun", "run")
     assert cli.succeeded
     assert "Would run: build/verify-runez/ripple-effect/.venv/bin/pytest\n" in cli.logged
+    assert not os.path.exists("build/verify-runez/last-run.log")  # Output is not recorded in dryrun mode
 
     runez.touch("build/verify-runez/leftover/foo", logger=None)
     cli.run("--dryrun", "run", "--clean")
@@ -132,7 +134,8 @@ def fake_program(path, script="exit 0"):
 def test_run_outcomes(cli):
     # Fake prepare: "installs" in .venv/ the fake pytest found in the project's 'pytest-script' (if any)
     fake_program("fake-prepare", "[ ! -f pytest-script ] || (mkdir -p .venv/bin && cp pytest-script .venv/bin/pytest)")
-    for name in ("ok", "not-injected", "redirected"):
+    fake_program("ok/pytest-script", "echo ok-out; echo ok-err >&2")
+    for name in ("not-injected", "redirected"):
         fake_program(f"{name}/pytest-script")
 
     fake_program("failing/pytest-script", "exit 3")
@@ -168,7 +171,9 @@ downstream-projects:
     assert os.path.isdir("redirected/.venv")
     testing = extract_section("Testing", cli.logged.stdout.contents())
     assert testing is not None
-    assert extract_section("ok", testing) == "Running: ok/.venv/bin/pytest"
+    ok_lines = (extract_section("ok", testing) or "").splitlines()
+    assert ok_lines[0] == "Running: ok/.venv/bin/pytest"
+    assert "ok-out" in ok_lines  # Passed-through output
     assert extract_section("both", testing) == "Running: both/.venv/bin/pytest -x\nRunning: both/.venv/bin/pytest --fail"
     outcome = extract_section("Outcome", cli.logged.stdout.contents())
     assert outcome is not None
@@ -183,6 +188,50 @@ both: FAILED
   pytest --fail: FAILED: exit code 4
 4 tests failed"""
     assert re.sub(r" \(\d+\.\ds\)", "", outcome) == expected
+
+    # Full output is recorded in proving-grounds: both streams (including the commands' passed-through output), and log chatter
+    run_log = Path("build/ripple-check/last-run.log")
+    recorded = run_log.read_text()
+    assert "full output recorded in: build/ripple-check/last-run.log\n" in recorded
+    recorded_ok = extract_section("ok", extract_section("Testing", recorded) or "") or ""
+    assert sorted(recorded_ok.splitlines()) == ["Running: ok/.venv/bin/pytest", "ok-err", "ok-out"]  # stdout/stderr order may vary
+    assert extract_section("Outcome", recorded) == outcome
+    assert "DEBUG Cleaned 1 file from ok/.venv\n" not in recorded  # Not shown without --verbose
+
+    # Recorded again by the next run, `--clean` doesn't wipe it out (log file gets opened after cleaning)
+    with (
+        patch("uv_metadata.get_metadata_from_pip_spec", side_effect=lambda pip_spec: {"name": Path(pip_spec).name}),
+        patch.object(VirtualEnv, "inject_upstream"),
+        patch.object(VirtualEnv, "is_upstream_editable", return_value=True),
+    ):
+        cli.run("--verbose", "-c", "sample.yml", "run", "--clean")
+
+    assert cli.failed
+    recorded = run_log.read_text()
+    prepared = extract_section("Preparation", recorded)
+    assert prepared
+    assert prepared.startswith("Cleaned 1 file from build/ripple-check\nfull output recorded in: ")
+    assert "DEBUG Cleaned 1 file from ok/.venv\n" in recorded
+    assert "\x1b[" not in recorded
+
+
+def test_tee_stream():
+    recorder = OutputRecorder()
+    tee = TeeStream(io.StringIO(), recorder)
+    assert tee.write("\x1b[31mhello\x1b[0m\n") == 15
+    tee.flush()
+    assert tee.getvalue() == "\x1b[31mhello\x1b[0m\n"  # Wrapped stream (and its attributes) gets it as-is
+    assert recorder.pending == ["hello\n"]  # Recorded uncolored, held until the log file is opened
+
+    # Progress bars: only what was drawn last on a line is recorded, line endings normalized
+    tee.write("[  ]\r[= ]\r[==] done\r\n[  ]\x1b[2K[==]\x1b[2Kok\r\r\n")
+    assert recorder.pending[-1] == "[==] done\nok\n"
+
+    # Line is recorded once complete: redraws can come in separate writes
+    for text in ("[  ] \r", "\x1b[2K[= ] \r", "\x1b[2K", "done\r\r\n"):
+        tee.write(text)
+
+    assert recorder.pending[-1] == "done\n"
 
 
 def tiny_project(folder):

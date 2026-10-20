@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.2.0
+
+- `run` records its full output (uncolored) in `<proving-grounds>/last-run.log`, except with `--dryrun`
+
 ## v1.1.0
 
 - **Breaking**: test commands are verified to really run against the upstream checkout, others are
