@@ -6,6 +6,9 @@ downstream-projects:
   - source-ref: ./bar
     prepare: uv sync --all-groups   # Overrides the default, for this project only
     test: pytest tests/ -x
+  - source-ref: ./corge
+    python: "3.13"                  # Python of its .venv/ (default: its .python-version, else ripple-effect's own)
+    test: pytest
   - description: Repos with a typecheck target
     test: tox -re py,typecheck      # Default for this group
     sources:

@@ -191,6 +191,7 @@ Key                     Top level Group Project
 ``description``                   ✓             Shown by ``show`` and in the run summary
 ``source-prefix``       ✓         ✓             Prepended to bare names
 ``prepare``             ✓         ✓     ✓       How to build ``.venv/`` (default: ``auto``, uses ``uv``)
+``python``              ✓         ✓     ✓       Python of ``.venv/`` with ``prepare: auto`` (see below)
 ``test``                ✓         ✓     ✓       Test command(s) (default ``pytest``)
 ======================= ========= ===== ======= ==========================================================
 
@@ -203,6 +204,9 @@ Key                     Top level Group Project
 - ``prepare: auto`` uses ``requirements.txt`` / ``tests/requirements.txt`` if present
   (``uv venv`` + ``uv pip install -r`` + the project itself), and ``uv sync`` otherwise. A
   ``.venv/`` is built only for projects with a ``pytest`` test command.
+- ``python`` is passed as-is to uv's ``--python`` (a version like ``"3.13"``, quoted, or a path).
+  Without it, ``prepare: auto`` uses the project's ``.python-version`` if it has one, and the python
+  running ripple-effect otherwise (never just the first ``python3`` on ``PATH``).
 - The whole config is validated up front: unknown keys, wrong value types, missing required keys,
   unsupported test commands, duplicate projects... are all reported at once, each with its
   location (e.g. ``downstream-projects[2].sources[0]``). ``show`` displays the config first, then
@@ -223,8 +227,8 @@ pass). Default: ``pytest``.
 ripple-effect only runs test commands it can verify really test your library, so that a pass
 means something:
 
-- ``pytest ...``: runs from the project's ``.venv/``, after checking that pytest and your library
-  (editable) are installed there. Other ways of invoking pytest (``.venv/bin/pytest``,
+- ``pytest ...``: runs from the project's ``.venv/``, activated (``VIRTUAL_ENV`` set, its ``bin/``
+  first on ``PATH``), after checking that pytest and your library (editable) are installed there. Other ways of invoking pytest (``.venv/bin/pytest``,
   ``python -m pytest``, ``uv run pytest``) are rejected: state them as ``pytest ...``
   (``uv run`` would re-sync ``.venv/``, replacing your library with its published version).
 - ``tox ...`` (also via a wrapper: ``uvx tox ...``, ``my-wrapper tox ...``): its first option must

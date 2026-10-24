@@ -17,7 +17,9 @@ otherwise wipe the repo.
    pytest command; tox uses its own envs). A venv with a working python is reused. Otherwise
    whatever is at `.venv` is replaced by an empty folder first: recent tox versions write a PEP 832
    `.venv` *file* pointing into `.tox/`, which uv refuses to build a venv over (and doesn't follow).
-   `prepare: auto` uses requirements files if present, else `uv sync`.
+   `prepare: auto` uses requirements files if present, else `uv sync`, always with an explicit
+   python (`VirtualEnv.python_args()`): a bare `uv venv` takes the first `python3` on `PATH`, which
+   on a CI agent was an older system python than the project needs.
 4. **Inject**: `uv pip install -e <upstream>` into that `.venv/`, skipped when `uv pip freeze`
    already shows the exact editable line (exact, because a downstream cloned under the upstream
    folder has an editable line that starts with the upstream path).

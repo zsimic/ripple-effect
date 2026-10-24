@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.3.0
+
+- `prepare: auto` creates `.venv/` with an explicit python: the new `python` setting (top level,
+  group or project) if given, else the project's `.python-version`, else the python running
+  ripple-effect. It used to take the first `python3` on `PATH`, which can be too old for the project
+- `pytest ...` runs with the project's `.venv/` activated (`VIRTUAL_ENV` set, its `bin/` first on
+  `PATH`), so tests that run `python` or a console script get that venv
+
 ## v1.2.0
 
 - `run` records its full output (uncolored) in `<proving-grounds>/last-run.log`, except with `--dryrun`

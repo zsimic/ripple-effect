@@ -23,9 +23,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 # Valid config keys, per level (see "Config reference" in README.rst)
-TOP_LEVEL_KEYS = ("upstream", "proving-grounds", "source-prefix", "prepare", "test", "downstream-projects")
-GROUP_KEYS = ("description", "source-prefix", "prepare", "test", "sources")
-PROJECT_KEYS = ("source-ref", "prepare", "test")
+TOP_LEVEL_KEYS = ("upstream", "proving-grounds", "source-prefix", "prepare", "python", "test", "downstream-projects")
+GROUP_KEYS = ("description", "source-prefix", "prepare", "python", "test", "sources")
+PROJECT_KEYS = ("source-ref", "prepare", "python", "test")
 LIST_KEYS = ("downstream-projects", "sources")  # Keys with a list value, 'test' is a string or a list, others are strings
 DEFAULT_PROVING_GROUNDS = "build/ripple-check"  # Relative to the config file's folder, 'build/' is typically git-ignored
 RUN_LOG = "last-run.log"  # Full output of last `run`, in proving-grounds
@@ -194,6 +194,7 @@ class ProjectSettings:
     """Settings of downstream projects: how to prepare and test them, and how to complete bare names."""
 
     prepare: str = "auto"
+    python: str | None = None  # Python for `prepare: auto` venvs, as uv's `--python` takes it
     test: tuple[str, ...] = ("pytest",)
     source_prefix: str | None = None
 
@@ -202,6 +203,7 @@ class ProjectSettings:
         test = data.get("test", self.test)
         return ProjectSettings(
             prepare=data.get("prepare", self.prepare),
+            python=data.get("python", self.python),
             test=(test,) if isinstance(test, str) else tuple(test),
             source_prefix=data.get("source-prefix", self.source_prefix),
         )
@@ -236,28 +238,49 @@ class VirtualEnv:
         env["VIRTUAL_ENV"] = str(self.venv_folder)
         return env
 
+    @property
+    def activated_env(self) -> dict[str, str]:
+        """Environment as `source .venv/bin/activate` would set it: tests calling `python` or console scripts find this venv."""
+        env = os.environ.copy()
+        env.pop("PYTHONHOME", None)
+        env["VIRTUAL_ENV"] = str(self.venv_folder)
+        env["PATH"] = os.pathsep.join([str(self.venv_folder / "bin"), env.get("PATH", "")])
+        return env
+
     def run_uv(self, *args, **kwargs):
         """Run uv with args (shown, see logged_run()), targeting this venv."""
         return logged_run("uv", *args, cwd=self.folder, env=self.uv_env, **kwargs)
 
-    def ensure_venv(self, prepare_cmd: str, force: bool = False):
-        """Create or update the venv using prepare_cmd or auto-detection."""
+    def python_args(self, python: str | None) -> list[str]:
+        """uv's `--python` for `prepare: auto`: 'python' if configured, else the project's .python-version, else ours."""
+        if python:
+            return ["--python", python]
+
+        if (self.folder / ".python-version").is_file():
+            return []  # uv honors it
+
+        # Not whatever `python3` comes first on PATH: it can be an older system python (seen on CI agents)
+        return ["--python", sys.executable]
+
+    def ensure_venv(self, prepare_cmd: str, python: str | None = None, force: bool = False):
+        """Create or update the venv using prepare_cmd or auto-detection (with 'python', see python_args())."""
         if not force and self.is_healthy:
             logging.debug("Reusing existing venv %s", runez.short(self.venv_folder))
             return
 
         runez.ensure_folder(self.venv_folder, clean=True)  # Whatever was there (even a file) gets replaced
         if prepare_cmd == "auto":
+            python_args = self.python_args(python)
             reqs = list(self.requirements_files())
             if reqs:
-                self.run_uv("venv", "--clear")
+                self.run_uv("venv", "--clear", *python_args)
                 for req in reqs:
                     self.run_uv("pip", "install", "-r", req)
 
                 self.run_uv("pip", "install", "-e", ".")  # install the project itself
 
             else:
-                self.run_uv("sync")
+                self.run_uv("sync", *python_args)
 
         else:
             logged_run(*shlex.split(prepare_cmd), cwd=self.folder)
@@ -336,9 +359,9 @@ class RunWith(ABC):
     def run(self) -> str | None:
         """Run this test command, return why it failed (None if it passed)."""
 
-    def run_command(self, program, *args) -> str | None:
+    def run_command(self, program, *args, env: dict[str, str] | None = None) -> str | None:
         """Run 'program' with 'args' (shown), return why it failed (None if it passed)."""
-        r = logged_run(program, *args, fatal=False, passthrough=True)
+        r = logged_run(program, *args, env=env, fatal=False, passthrough=True)
         return None if r.succeeded else f"exit code {r.exit_code}"
 
 
@@ -358,7 +381,7 @@ class RunWithPytest(RunWith):
             if not venv.is_upstream_editable(upstream.local_folder):
                 return f"{upstream.package_name} is not installed editable in .venv/"
 
-        return self.run_command(pytest, *self.args[1:])
+        return self.run_command(pytest, *self.args[1:], env=venv.activated_env)
 
 
 class RunWithTox(RunWith):
@@ -522,12 +545,16 @@ class DownstreamLocalized(ProjectRef):
     def __init__(self, spec: RippleSpec, source_ref: str, settings: ProjectSettings):
         super().__init__(spec, source_ref)
         self.prepare_cmd = settings.prepare
+        self.python = settings.python
         self.test_commands = tuple(RunWith.for_command(self, command) for command in settings.test)
 
     def representable_lines(self, indent=""):
         """Lines for display in `show` output."""
         yield represented("source-ref", self.source_ref, indent=f"{indent} - ")
         yield represented("prepare", self.prepare_cmd, indent=f"{indent}   ")
+        if self.python:
+            yield represented("python", self.python, indent=f"{indent}   ")
+
         if len(self.test_commands) == 1:
             yield represented("test", self.test_commands[0].command, indent=f"{indent}   ")
 
@@ -552,7 +579,7 @@ class DownstreamLocalized(ProjectRef):
             self._clone_or_update()
 
         if self.needs_venv:
-            self.venv.ensure_venv(self.prepare_cmd)
+            self.venv.ensure_venv(self.prepare_cmd, python=self.python)
             self.venv.inject_upstream(self.spec.upstream)
 
     def run_tests(self) -> list[Outcome]:
@@ -672,6 +699,9 @@ class RippleSpec:
 
                 else:
                     problems.extend(problem for problem in map(RunWith.problem_with, commands) if problem)
+
+            elif key == "python" and not isinstance(value, str):
+                problems.append("'python' must be a string, write it quoted (e.g. python: \"3.13\"): YAML reads 3.10 as the number 3.1")
 
             elif not value or not isinstance(value, str):
                 problems.append(f"'{key}' must be a non-empty string")

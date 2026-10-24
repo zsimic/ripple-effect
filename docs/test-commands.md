@@ -10,6 +10,9 @@ failed (or `None`). A command no other handler recognizes gets `RunWithNotSuppor
 - Only the plain form `pytest ...` is accepted, and it always runs `<project>/.venv/bin/pytest`.
   One form keeps configs clear, and `.venv/` is the only venv ripple-effect prepares and injects
   into, so supporting others would add nothing.
+- It runs with that `.venv/` activated (`VirtualEnv.activated_env`), so tests that run `python` or
+  a console script get the project's venv. ripple-effect's own venv is deliberately not put on
+  `PATH` (unlike `uvx`, which prepends its tool env): it would leak into downstream commands.
 - `uv run pytest` is rejected with a specific message: `uv run` syncs `.venv/` with the lock file
   first, which silently replaced the injected editable upstream with its locked version
   (`runez==5.10.2`) when tried. `python -m pytest` only differs by putting the current folder on

@@ -2,7 +2,7 @@
 config_path: tests/samples/bad-config.yml
 upstream: -missing-
 proving-grounds: build/ripple-check
-12 downstream projects:
+13 downstream projects:
  - source-ref: ./foo
    prepare: auto
    test: pytest
@@ -41,18 +41,21 @@ proving-grounds: build/ripple-check
    - source-ref: ./not-strings
      prepare: auto
      test: pytest
+ - source-ref: ./corge
+   prepare: auto
+   test: pytest
 
 ## Errors
 Invalid config tests/samples/bad-config.yml:
 - top level: 'upstream' must be a non-empty string
-- top level: unknown key 'defaults', expected one of: upstream, proving-grounds, source-prefix, prepare, test, downstream-projects
+- top level: unknown key 'defaults', expected one of: upstream, proving-grounds, source-prefix, prepare, python, test, downstream-projects
 - top level: 'source-prefix' must be a URL or a local path, got 'corp/'
 - downstream-projects[1]: expected a string or a mapping
 - downstream-projects[2]: needs either 'source-ref' (a project) or 'sources' (a group)
-- downstream-projects[3]: unknown key 'repos', expected one of: description, source-prefix, prepare, test, sources
+- downstream-projects[3]: unknown key 'repos', expected one of: description, source-prefix, prepare, python, test, sources
 - downstream-projects[3]: needs either 'source-ref' (a project) or 'sources' (a group)
-- downstream-projects[4]: unknown key 'sources', expected one of: source-ref, prepare, test
-- downstream-projects[5].sources[0]: unknown key 'sources', expected one of: source-ref, prepare, test
+- downstream-projects[4]: unknown key 'sources', expected one of: source-ref, prepare, python, test
+- downstream-projects[5].sources[0]: unknown key 'sources', expected one of: source-ref, prepare, python, test
 - downstream-projects[5].sources[0]: missing 'source-ref'
 - downstream-projects[5].sources[1]: missing 'source-ref'
 - downstream-projects[6]: 'sources' must be a non-empty list
@@ -67,5 +70,6 @@ Invalid config tests/samples/bad-config.yml:
 - downstream-projects[10].sources[1]: test command 'uvx tox -e py': tox's first option must be -r (or --recreate, e.g. 'tox -re py'), tox otherwise reuses existing envs
 - downstream-projects[10].sources[1]: test command 'tox -e py -- -r': tox's first option must be -r (or --recreate, e.g. 'tox -re py'), tox otherwise reuses existing envs
 - downstream-projects[10].sources[2]: 'test' must be a non-empty string, or a non-empty list of them
+- downstream-projects[11]: 'python' must be a string, write it quoted (e.g. python: "3.13"): YAML reads 3.10 as the number 3.1
 - './foo' is listed more than once in downstream-projects
 - '~/dev/foo' is listed more than once in downstream-projects
