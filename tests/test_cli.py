@@ -1,6 +1,7 @@
 import io
 import os
 import re
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -134,7 +135,7 @@ def fake_program(path, script="exit 0"):
 def test_run_outcomes(cli):
     # Fake prepare: "installs" in .venv/ the fake pytest found in the project's 'pytest-script' (if any)
     fake_program("fake-prepare", "[ ! -f pytest-script ] || (mkdir -p .venv/bin && cp pytest-script .venv/bin/pytest)")
-    fake_program("ok/pytest-script", "echo ok-out; echo ok-err >&2")
+    fake_program("ok/pytest-script", 'echo ok-out; echo ok-err >&2; echo "venv=$VIRTUAL_ENV"; echo "path=${PATH%%:*}"')
     for name in ("not-injected", "redirected"):
         fake_program(f"{name}/pytest-script")
 
@@ -174,6 +175,8 @@ downstream-projects:
     ok_lines = (extract_section("ok", testing) or "").splitlines()
     assert ok_lines[0] == "Running: ok/.venv/bin/pytest"
     assert "ok-out" in ok_lines  # Passed-through output
+    activated = [f"venv={os.path.abspath('ok/.venv')}", f"path={os.path.abspath('ok/.venv/bin')}"]
+    assert [line for line in ok_lines if line.startswith(("venv=", "path="))] == activated  # Ran with .venv/ activated
     assert extract_section("both", testing) == "Running: both/.venv/bin/pytest -x\nRunning: both/.venv/bin/pytest --fail"
     outcome = extract_section("Outcome", cli.logged.stdout.contents())
     assert outcome is not None
@@ -194,7 +197,7 @@ both: FAILED
     recorded = run_log.read_text()
     assert "full output recorded in: build/ripple-check/last-run.log\n" in recorded
     recorded_ok = extract_section("ok", extract_section("Testing", recorded) or "") or ""
-    assert sorted(recorded_ok.splitlines()) == ["Running: ok/.venv/bin/pytest", "ok-err", "ok-out"]  # stdout/stderr order may vary
+    assert sorted(recorded_ok.splitlines()) == sorted(["Running: ok/.venv/bin/pytest", "ok-err", "ok-out", *activated])  # Order may vary
     assert extract_section("Outcome", recorded) == outcome
     assert "DEBUG Cleaned 1 file from ok/.venv\n" not in recorded  # Not shown without --verbose
 
@@ -268,7 +271,8 @@ def test_dryrun_existing_setups(cli):
     assert cli.succeeded
     prepared = extract_section("Preparation", cli.logged.stdout.contents())
     assert prepared is not None
-    expected = """\
+    python = runez.short(sys.executable)
+    expected = f"""\
 upstream: tinyup @ tinyup
 
 ### ready
@@ -283,7 +287,7 @@ Would run: uv pip install -e tinyup
 ### old-school
 folder: old-school
 Would create old-school/.venv
-Would run: uv venv --clear
+Would run: uv venv --clear --python {python}
 Would run: uv pip install -r old-school/requirements.txt
 Would run: uv pip install -e .
 injecting tinyup (editable)
@@ -294,10 +298,33 @@ folder: build/ripple-check/cloned
 Would run: git fetch
 Would run: git reset --hard FETCH_HEAD
 Would create build/ripple-check/cloned/.venv
-Would run: uv sync
+Would run: uv sync --python {python}
 injecting tinyup (editable)
 Would run: uv pip install -e tinyup"""
     assert prepared == expected
+
+
+def test_python_setting(cli):
+    # `prepare: auto` venvs get an explicit python: the configured one, else the project's .python-version, else ripple-effect's own
+    tiny_project("tinyup")
+    for name in ("default", "pinned", "configured"):
+        runez.write(f"{name}/requirements.txt", "foo\n", logger=None)
+
+    runez.write("pinned/.python-version", "3.12\n", logger=None)
+    runez.write(
+        "sample.yml",
+        "upstream: ./tinyup\ndownstream-projects:\n  - ./default\n  - ./pinned\n  - source-ref: ./configured\n    python: '3.11'\n",
+        logger=None,
+    )
+    with patch("uv_metadata.get_metadata_from_pip_spec", side_effect=lambda pip_spec: {"name": Path(pip_spec).stem}):
+        cli.run("--dryrun", "-c", "sample.yml", "prepare")
+
+    assert cli.succeeded
+    output = cli.logged.stdout.contents()
+    prepared = {name: extract_section(name, output) or "" for name in ("default", "pinned", "configured")}
+    assert f"Would run: uv venv --clear --python {runez.short(sys.executable)}\n" in prepared["default"]
+    assert "Would run: uv venv --clear\n" in prepared["pinned"]  # uv honors .python-version
+    assert "Would run: uv venv --clear --python 3.11\n" in prepared["configured"]
 
 
 def test_tox_runs(cli, monkeypatch):

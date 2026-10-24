@@ -2,13 +2,17 @@
 config_path: tests/samples/groups.yml
 upstream: ~/github/runez
 proving-grounds: build/ripple-check
-5 downstream projects:
+6 downstream projects:
  - source-ref: ./foo
    prepare: auto
    test: tox -re py
  - source-ref: ./bar
    prepare: uv sync --all-groups
    test: pytest tests/ -x
+ - source-ref: ./corge
+   prepare: auto
+   python: 3.13
+   test: pytest
  - Repos with a typecheck target:
    - source-ref: ./baz
      prepare: auto

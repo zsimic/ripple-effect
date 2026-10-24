@@ -25,3 +25,5 @@ downstream-projects:
         test: [tox, tox -e py, tox -vre py, uvx tox -e py, tox -e py -- -r]
       - source-ref: ./not-strings
         test: [pytest, 1]
+  - source-ref: ./corge
+    python: 3.10              # Not quoted: YAML reads it as the number 3.1

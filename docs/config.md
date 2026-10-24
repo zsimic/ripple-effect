@@ -26,9 +26,11 @@ code 1: `cli.main()` calls it for every command except `show`, which prints the 
 
 - Each `downstream-projects` entry becomes a `DownstreamGroup`; a lone project is a group without
   description, which keeps `show` and the run summary uniform.
-- `ProjectSettings` carries `prepare`, `test` and `source_prefix`, layered with `overridden()`:
+- `ProjectSettings` carries `prepare`, `python`, `test` and `source_prefix`, layered with `overridden()`:
   built-in default, then top level, then group, then project. A `test` list replaces the inherited
   one, it isn't merged.
+- An unquoted `python: 3.10` reaches us as the number `3.1`: numbers get their own problem message,
+  asking for quotes, rather than being converted.
 - `source-prefix` completes **bare names** only (`is_bare_name()`: neither a URL nor a local path),
   by plain concatenation: no `.git` added (git hosts and uv-metadata don't need it), and a local
   prefix like `~/dev/` works too. `upstream` never gets a prefix.
